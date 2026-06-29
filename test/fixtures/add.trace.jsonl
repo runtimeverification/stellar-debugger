@@ -1,0 +1,8 @@
+{"pos": 100, "instr": ["local.get", 0], "stack": [], "locals": {"0": ["i64", 4], "1": ["i64", 3]}}
+{"pos": 102, "instr": ["local.get", 1], "stack": [["i64", 4]], "locals": {"0": ["i64", 4], "1": ["i64", 3]}}
+{"pos": 104, "instr": ["i64.add"], "stack": [["i64", 4], ["i64", 3]], "locals": {"0": ["i64", 4], "1": ["i64", 3]}}
+{"pos": 106, "instr": ["call", 7], "stack": [["i64", 7]], "locals": {"0": ["i64", 4], "1": ["i64", 3]}}
+{"pos": 200, "instr": ["local.get", 0], "stack": [["i64", 7]], "locals": {"0": ["i64", 7]}}
+{"pos": 202, "instr": ["return"], "stack": [["i64", 7]], "locals": {"0": ["i64", 7]}}
+{"pos": 108, "instr": ["return"], "stack": [["u32", 7]], "locals": {"0": ["i64", 4], "1": ["i64", 3]}}
+{"pos": null, "instr": ["host.return"], "stack": [["u32", 7]], "locals": {}}

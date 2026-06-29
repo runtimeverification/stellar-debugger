@@ -1,0 +1,223 @@
+{
+  "name": "simbolik-komet",
+  "displayName": "Soroban Debugger (komet)",
+  "description": "Time-travel debugger for Stellar/Soroban smart contracts, backed by komet-node",
+  "version": "0.0.1",
+  "publisher": "runtimeverification",
+  "license": "BSD-3-Clause",
+  "engines": {
+    "vscode": "^1.85.0",
+    "node": ">=22"
+  },
+  "categories": [
+    "Debuggers"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onDebug"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "soroban-wat",
+        "aliases": [
+          "Soroban WAT",
+          "soroban-wat"
+        ],
+        "extensions": [
+          ".komet"
+        ]
+      }
+    ],
+    "commands": [
+      {
+        "command": "soroban.debug",
+        "title": "Soroban: Debug Contract Function",
+        "category": "Soroban"
+      },
+      {
+        "command": "soroban.showWat",
+        "title": "Soroban: Show Disassembly (WAT)",
+        "category": "Soroban"
+      }
+    ],
+    "breakpoints": [
+      {
+        "language": "soroban-wat"
+      },
+      {
+        "language": "rust"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "soroban",
+        "label": "Soroban (komet)",
+        "languages": [
+          "rust"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "function"
+            ],
+            "properties": {
+              "contract": {
+                "type": "string",
+                "description": "Path to the contract crate directory (containing Cargo.toml). Used to build the wasm.",
+                "default": "${workspaceFolder}"
+              },
+              "wasmPath": {
+                "type": "string",
+                "description": "Path to a prebuilt contract .wasm. Overrides building from `contract`."
+              },
+              "buildCommand": {
+                "type": "string",
+                "description": "Command used to build the contract wasm.",
+                "default": "stellar contract build"
+              },
+              "function": {
+                "type": "string",
+                "description": "Name of the contract function to invoke and debug."
+              },
+              "args": {
+                "type": "array",
+                "description": "Arguments to the function, each as { value, type }.",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "value",
+                    "type"
+                  ],
+                  "properties": {
+                    "value": {
+                      "description": "The argument value (JSON)."
+                    },
+                    "type": {
+                      "type": "string",
+                      "description": "ScVal type.",
+                      "enum": [
+                        "bool",
+                        "u32",
+                        "i32",
+                        "u64",
+                        "i64",
+                        "u128",
+                        "i128",
+                        "u256",
+                        "i256",
+                        "symbol",
+                        "string",
+                        "bytes",
+                        "address",
+                        "vec",
+                        "map"
+                      ]
+                    }
+                  }
+                },
+                "default": []
+              },
+              "node": {
+                "type": "object",
+                "description": "komet-node connection / spawn settings.",
+                "properties": {
+                  "attach": {
+                    "type": "boolean",
+                    "description": "Attach to an already-running komet-node instead of spawning one.",
+                    "default": false
+                  },
+                  "host": {
+                    "type": "string",
+                    "default": "localhost"
+                  },
+                  "port": {
+                    "type": "number",
+                    "default": 8000
+                  },
+                  "command": {
+                    "type": "string",
+                    "description": "Command to spawn komet-node.",
+                    "default": "python3 -m komet_node"
+                  },
+                  "stateFile": {
+                    "type": "string",
+                    "description": "Path to the komet-node state.kore file. Defaults to a temp file."
+                  }
+                },
+                "default": {}
+              },
+              "sourceSecret": {
+                "type": "string",
+                "description": "Optional source account secret (S...). If omitted, a fresh account is seeded."
+              },
+              "rawTrace": {
+                "type": "string",
+                "description": "Attach mode: path to a precomputed JSONL trace file to replay (skips all RPC)."
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "soroban",
+            "request": "launch",
+            "name": "Soroban: Debug add(1, 2)",
+            "contract": "${workspaceFolder}",
+            "function": "add",
+            "args": [
+              {
+                "value": 1,
+                "type": "u32"
+              },
+              {
+                "value": 2,
+                "type": "u32"
+              }
+            ]
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Soroban: Debug contract function",
+            "description": "Build, deploy, and time-travel debug a Soroban contract function",
+            "body": {
+              "type": "soroban",
+              "request": "launch",
+              "name": "Soroban: Debug ${1:function}",
+              "contract": "^\"\\${workspaceFolder}\"",
+              "function": "${1:function}",
+              "args": []
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build -- --minify",
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src --ext ts",
+    "pretest": "tsc -p tsconfig.test.json",
+    "test": "mocha"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^13.3.0",
+    "@vscode/debugadapter": "^1.68.0",
+    "@vscode/debugprotocol": "^1.68.0"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.7",
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "@vscode/debugadapter-testsupport": "^1.68.0",
+    "esbuild": "^0.23.0",
+    "eslint": "^8.57.0",
+    "mocha": "^10.7.0",
+    "typescript": "^5.5.0"
+  }
+}

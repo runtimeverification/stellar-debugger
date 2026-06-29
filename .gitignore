@@ -1,0 +1,9 @@
+node_modules/
+dist/
+out/
+*.vsix
+.DS_Store
+*.log
+state.kore
+.claude/
+test/fixtures/sample-contract/target/
