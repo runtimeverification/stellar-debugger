@@ -1,5 +1,5 @@
 {
-  "name": "longlight",
+  "name": "simbolik-komet",
   "build": {
     "dockerfile": "Dockerfile"
   },
@@ -16,7 +16,8 @@
   "customizations": {
     "vscode": {
       "extensions": [
-        "anthropic.claude-code"
+        "anthropic.claude-code",
+        "rust-lang.rust-analyzer"
       ]
     }
   }
