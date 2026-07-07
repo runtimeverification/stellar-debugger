@@ -1,10 +1,9 @@
 /**
  * End-to-end integration against a REAL komet-node.
  *
- * Auto-skips unless KOMET_NODE_E2E=1 is set (and the komet-node venv is on
- * PATH so `python -m komet_node` runs). In the devcontainer:
+ * Auto-skips unless KOMET_NODE_E2E=1 is set (and `komet-node` is on PATH, as
+ * installed by `kup install komet-node`). In the devcontainer:
  *
- *   source $KOMET_NODE_VENV/bin/activate
  *   KOMET_NODE_E2E=1 npm test
  *
  * Drives the full TurnkeyPipeline (spawn node -> seed -> deploy -> invoke with
@@ -35,7 +34,7 @@ const enabled = process.env.KOMET_NODE_E2E === '1';
           // attach:false -> the pipeline spawns komet-node itself.
           node: {
             attach: false,
-            command: process.env.KOMET_NODE_COMMAND ?? 'python -m komet_node',
+            command: process.env.KOMET_NODE_COMMAND ?? 'komet-node',
             port: Number(process.env.KOMET_NODE_PORT ?? 8000),
           },
         },

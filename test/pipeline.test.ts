@@ -55,9 +55,10 @@ describe('TurnkeyPipeline (against mock komet-node)', () => {
     assert.ok(resolved.model.length > 0);
     assert.strictEqual(resolved.model.length, trace.trim().split('\n').length);
 
-    // Three writes (seed account, upload wasm, create contract) then a trace.
-    assert.strictEqual(mock.envelopes('sendTransaction').length, 3);
-    assert.strictEqual(mock.envelopes('traceTransaction').length, 1);
+    // Four submissions (seed account, upload wasm, create contract, invoke),
+    // then one trace fetched by hash.
+    assert.strictEqual(mock.envelopes('sendTransaction').length, 4);
+    assert.strictEqual(mock.calls('traceTransaction'), 1);
   });
 
   it('uploads the actual wasm bytes', async () => {
@@ -73,7 +74,7 @@ describe('TurnkeyPipeline (against mock komet-node)', () => {
 
   it('invokes the named function with the given args', async () => {
     await run();
-    const invokeEnv = mock.envelopes('traceTransaction')[0];
+    const invokeEnv = mock.envelopes('sendTransaction')[3];
     const tx = TransactionBuilder.fromXDR(invokeEnv, Networks.TESTNET);
     const op = (tx as any).operations[0];
     const invoke = op.func.invokeContract();

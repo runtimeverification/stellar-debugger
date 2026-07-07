@@ -1,0 +1,43 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Soroban: Replay add(4, 3) trace",
+      "type": "soroban",
+      "request": "launch",
+      "rawTrace": "${workspaceFolder}/traces/add.trace.jsonl",
+      "function": "add"
+    },
+    {
+      "name": "Soroban: Debug store(42)  [live pipeline]",
+      "type": "soroban",
+      "request": "launch",
+      "contract": "${workspaceFolder}/greeter",
+      "function": "store",
+      "args": [
+        { "value": 42, "type": "u32" }
+      ]
+    },
+    {
+      "name": "Soroban: Debug add(1, 2)  [live pipeline]",
+      "type": "soroban",
+      "request": "launch",
+      "contract": "${workspaceFolder}/adder",
+      "function": "add",
+      "args": [
+        { "value": 1, "type": "u32" },
+        { "value": 2, "type": "u32" }
+      ]
+    },
+    {
+      "name": "Soroban: Debug increment(5)  [live pipeline]",
+      "type": "soroban",
+      "request": "launch",
+      "contract": "${workspaceFolder}/increment",
+      "function": "increment",
+      "args": [
+        { "value": 5, "type": "u32" }
+      ]
+    }
+  ]
+}

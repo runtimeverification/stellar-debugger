@@ -1,0 +1,8 @@
+{
+  // The nix-cached `komet-node` on $PATH in this devcontainer predates the fix
+  // for value-returning contract calls (it hardcoded a Void result and got stuck
+  // on any function returning a value). The fixed build lives in the uv venv, so
+  // point the extension at it here. Remove this once the nix cache ships the fix
+  // and plain `komet-node` on $PATH is current.
+  "soroban.kometNode.path": "/home/node/.komet-node/bin/komet-node"
+}

@@ -67,6 +67,7 @@ class SorobanConfigurationProvider implements vscode.DebugConfigurationProvider 
     if (!config.contract && !config.wasmPath && !config.rawTrace && folder) {
       config.contract = folder.uri.fsPath;
     }
+    applyBinaryPaths(config, folder);
     if (!config.function && !config.rawTrace) {
       return vscode.window
         .showErrorMessage('Soroban debug: a `function` (or a `rawTrace` file) is required in the launch configuration.')
@@ -74,6 +75,36 @@ class SorobanConfigurationProvider implements vscode.DebugConfigurationProvider 
     }
     return config;
   }
+}
+
+/**
+ * Resolve the locations of the external binaries the pipeline shells out to
+ * (`komet-node` and the `stellar` CLI). A launch configuration's own fields win;
+ * otherwise fall back to the `soroban.*` settings, which default to the binaries
+ * on `$PATH`. This keeps the `vscode`-free pipeline modules oblivious to VSCode
+ * settings — they just receive a resolved command.
+ */
+function applyBinaryPaths(
+  config: vscode.DebugConfiguration,
+  folder: vscode.WorkspaceFolder | undefined,
+): void {
+  const settings = vscode.workspace.getConfiguration('soroban', folder?.uri ?? null);
+  const kometNodePath = settings.get<string>('kometNode.path')?.trim() || 'komet-node';
+  const stellarPath = settings.get<string>('stellar.path')?.trim() || 'stellar';
+
+  // komet-node is spawned directly (no shell), so a path with spaces is fine verbatim.
+  config.node = config.node ?? {};
+  if (!config.node.command) {
+    config.node.command = kometNodePath;
+  }
+  // The build command runs through a shell, so quote a path that contains spaces.
+  if (!config.buildCommand) {
+    config.buildCommand = `${quoteForShell(stellarPath)} contract build`;
+  }
+}
+
+function quoteForShell(p: string): string {
+  return /\s/.test(p) ? `"${p}"` : p;
 }
 
 async function startDebugFromActiveEditor(): Promise<void> {

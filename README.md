@@ -50,9 +50,9 @@ The replay logic and pipeline are exercised by 38 tests (`npm test`):
 ## Devcontainer toolchain
 
 The devcontainer installs everything needed to run the pipeline end to end:
-Rust + the wasm targets, the Stellar CLI, `uv`, and the K toolchain (`komet`)
-plus `komet-node` (via Nix/`kup`). See `.devcontainer/Dockerfile` and
-`.devcontainer/install-komet-node.sh`.
+Rust + the wasm targets, the Stellar CLI, and `komet-node` (installed straight
+from RV's binary cache with `kup install komet-node`, which also pulls the K
+toolchain and the prebuilt semantics). See `.devcontainer/Dockerfile`.
 
 ## Architecture
 
@@ -89,21 +89,17 @@ npm run lint
 ```
 
 Press **F5** (Run Extension) to open an Extension Development Host with the
-extension loaded. Then use a launch configuration like:
+extension loaded. It opens the [`examples/`](examples/) workspace — a
+self-contained Soroban project with two contracts (`adder`, `increment`) and a
+captured trace — so there is something real to debug immediately.
 
-```jsonc
-{
-  "type": "soroban",
-  "request": "launch",
-  "name": "Replay a captured trace",
-  "rawTrace": "${workspaceFolder}/test/fixtures/add.trace.jsonl",
-  "function": "add"
-}
-```
+Pick a config from the Run and Debug view. Start with **Soroban: Replay
+add(4, 3) trace**, which replays the bundled trace so you can step
+forward/backward, set breakpoints on instructions, and inspect the stack/locals
+— end to end, with no komet-node required. The **Debug add(1, 2)** and **Debug
+increment(5)** configs exercise the full build → deploy → trace pipeline.
 
-This replays the bundled sample trace so you can step forward/backward, set
-breakpoints on instructions, and inspect the stack/locals — end to end, with no
-komet-node required.
+See [`examples/README.md`](examples/README.md) for details.
 
 ## Roadmap
 

@@ -1,9 +1,9 @@
 /**
  * Parsing of komet-node execution traces.
  *
- * komet-node executes a whole transaction and (with `--trace` / via the
- * `traceTransaction` RPC) emits a trace as JSON Lines — one record per executed
- * WebAssembly instruction. A record looks like:
+ * komet-node executes a whole transaction and, via the `traceTransaction` RPC,
+ * emits a trace as JSON Lines — one record per executed WebAssembly
+ * instruction. A record looks like:
  *
  *   {"pos": 597, "instr": ["local.get", 0], "stack": [["i64", 4]], "locals": {"0": ["i64", 4]}}
  *

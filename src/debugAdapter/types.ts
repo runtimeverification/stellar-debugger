@@ -28,7 +28,8 @@ export interface SorobanLaunchArgs extends DebugProtocol.LaunchRequestArguments 
     host?: string;
     port?: number;
     command?: string;
-    stateFile?: string;
+    /** Directory komet-node uses for its I/O artifacts (`--io-dir`). */
+    ioDir?: string;
   };
   /** Optional source account secret; a fresh account is seeded if omitted. */
   sourceSecret?: string;

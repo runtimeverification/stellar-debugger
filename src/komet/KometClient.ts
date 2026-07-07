@@ -4,13 +4,15 @@
  * komet-node exposes a Stellar-RPC-shaped JSON-RPC API (default
  * http://localhost:8000) with six methods: getHealth, getNetwork,
  * getLatestLedger, sendTransaction, getTransaction, and the non-standard
- * traceTransaction. Transactions are passed as base64 XDR TransactionEnvelopes.
+ * traceTransaction.
  *
- * OPEN QUESTION (to verify against a live node — see plan): whether
- * `traceTransaction` returns the JSONL trace inline in its result, or whether
- * the trace must be fetched via a follow-up `getTransaction`. We handle both:
- * `traceTransaction()` returns the inline trace when present and otherwise
- * falls back to getTransaction(hash).trace.
+ * A transaction is submitted as a base64 XDR TransactionEnvelope via
+ * `sendTransaction`, which returns its hash. The execution trace is then
+ * fetched by hash: `traceTransaction({hash})` returns the JSONL trace as a
+ * bare string (one JSON record per executed wasm instruction). The final
+ * SUCCESS/FAILED status comes from `getTransaction({hash})` — the trace result
+ * itself carries no status. (Verified against komet-node installed via
+ * `kup install komet-node`.)
  *
  * Pure module (uses global fetch, no `vscode` imports) so it can be tested
  * against a mock HTTP server.
@@ -37,8 +39,6 @@ export interface GetTransactionResult {
   envelopeXdr?: string;
   resultXdr?: string;
   resultMetaXdr?: string;
-  /** Newline-separated JSON trace records, or null/absent when not traced. */
-  trace?: string | null;
   latestLedger?: string;
   latestLedgerCloseTime?: string;
 }
@@ -122,34 +122,20 @@ export class KometClient {
   }
 
   /**
-   * Submit a transaction with tracing enabled and return the raw JSONL trace.
-   * Tries the inline trace from the traceTransaction result first, then falls
-   * back to getTransaction(hash).trace.
+   * Fetch the JSONL execution trace for an already-submitted transaction.
+   * Returns the trace as a bare newline-separated string (one JSON record per
+   * executed wasm instruction). Throws if the node returns no trace for the
+   * hash (e.g. the transaction was not a contract invocation).
    */
-  async traceTransaction(envelopeXdrBase64: string): Promise<{ hash: string; trace: string; result: GetTransactionResult }> {
-    const traceResult = await this.call<GetTransactionResult & { hash?: string }>('traceTransaction', {
-      transaction: envelopeXdrBase64,
-    });
-
-    let hash = traceResult.hash;
-    let trace = traceResult.trace ?? undefined;
-    let finalResult: GetTransactionResult = traceResult;
-
-    if ((trace === undefined || trace === null) && hash) {
-      finalResult = await this.getTransaction(hash);
-      trace = finalResult.trace ?? undefined;
-    }
-
-    if (trace === undefined || trace === null) {
+  async traceTransaction(hash: string): Promise<string> {
+    const trace = await this.call<string>('traceTransaction', { hash });
+    if (typeof trace !== 'string' || trace.trim() === '') {
       throw new KometRpcError(
-        'traceTransaction returned no trace (neither inline nor via getTransaction). ' +
-          'Was the node started with --trace, and is the transaction a contract invocation?',
+        `traceTransaction returned no trace for ${hash}. ` +
+          'Was the transaction a contract invocation?',
       );
     }
-    if (!hash) {
-      hash = '';
-    }
-    return { hash, trace, result: finalResult };
+    return trace;
   }
 
   /** Poll getHealth until healthy or the deadline passes. */

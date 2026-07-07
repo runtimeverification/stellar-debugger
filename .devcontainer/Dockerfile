@@ -53,13 +53,12 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       | sh -s -- -y --profile minimal \
   && /home/node/.cargo/bin/rustup target add wasm32v1-none wasm32-unknown-unknown
 
-# --- uv (Python package manager for komet-node) ----------------------------
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# --- Nix + kup + komet semantics -------------------------------------------
-# komet-node executes contracts via the K-based `komet` semantics. We install
-# the K toolchain through Runtime Verification's `kup` (Nix-based), pulling
-# prebuilt binaries from RV's binary cache rather than compiling from source.
+# --- Nix + kup + komet-node ------------------------------------------------
+# komet-node executes contracts via the K-based `komet` semantics. Both the
+# node and its semantics are now published to RV's binary cache, so we install
+# the whole thing with a single `kup install komet-node` — pulling prebuilt
+# binaries instead of compiling the semantics from source (the old approach
+# required uv + a Python venv + a multi-minute `kdist build`).
 ENV NIX_CONFIG="experimental-features = nix-command flakes"
 RUN curl -L https://nixos.org/nix/install | sh -s -- --no-daemon --yes
 ENV PATH="/home/node/.nix-profile/bin:/home/node/.local/bin:/home/node/.cargo/bin:${PATH}"
@@ -74,11 +73,5 @@ RUN sudo mkdir -p /etc/nix \
       'extra-trusted-public-keys = k-framework.cachix.org-1:jeyMXB2h28gpNRjuVkehg+zLj62ma1RnyyopA/20yFE= k-framework-binary.cachix.org-1:pJedQ8iG19BW3v/DMMmiRVtwRBGO3fyMv2Ws0OpBADs=' \
     | sudo tee -a /etc/nix/nix.conf
 RUN curl -L https://kframework.org/install | bash \
-  && kup install komet
-
-# --- komet-node (local Stellar testnet on K semantics) ---------------------
-# Installed into a dedicated venv; exposes `python -m komet_node`.
-# (Finalized after live verification — see scripts/install-komet-node.sh.)
-ENV KOMET_NODE_VENV=/home/node/.komet-node
-COPY --chown=node:node install-komet-node.sh /tmp/install-komet-node.sh
-RUN bash /tmp/install-komet-node.sh
+  && kup install komet-node \
+  && komet-node --help >/dev/null

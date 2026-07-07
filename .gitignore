@@ -7,3 +7,4 @@ out/
 state.kore
 .claude/
 test/fixtures/sample-contract/target/
+examples/*/target/

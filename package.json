@@ -17,6 +17,21 @@
     "onDebug"
   ],
   "contributes": {
+    "configuration": {
+      "title": "Soroban Debugger (komet)",
+      "properties": {
+        "soroban.kometNode.path": {
+          "type": "string",
+          "default": "komet-node",
+          "markdownDescription": "Path to the `komet-node` executable. Defaults to `komet-node` found on your `PATH`; set an absolute path to override. A launch configuration's `node.command` takes precedence over this setting."
+        },
+        "soroban.stellar.path": {
+          "type": "string",
+          "default": "stellar",
+          "markdownDescription": "Path to the `stellar` CLI executable, used to build contracts (as `<stellar> contract build`). Defaults to `stellar` found on your `PATH`; set an absolute path to override. A launch configuration's `buildCommand` takes precedence over this setting."
+        }
+      }
+    },
     "languages": [
       {
         "id": "soroban-wat",
@@ -73,8 +88,7 @@
               },
               "buildCommand": {
                 "type": "string",
-                "description": "Command used to build the contract wasm.",
-                "default": "stellar contract build"
+                "description": "Command used to build the contract wasm. Overrides the `soroban.stellar.path` setting. Defaults to `<soroban.stellar.path> contract build`."
               },
               "function": {
                 "type": "string",
@@ -137,12 +151,11 @@
                   },
                   "command": {
                     "type": "string",
-                    "description": "Command to spawn komet-node.",
-                    "default": "python3 -m komet_node"
+                    "description": "Path/command used to spawn komet-node. Overrides the `soroban.kometNode.path` setting (which defaults to `komet-node` on your PATH)."
                   },
-                  "stateFile": {
+                  "ioDir": {
                     "type": "string",
-                    "description": "Path to the komet-node state.kore file. Defaults to a temp file."
+                    "description": "Directory for komet-node's I/O artifacts (--io-dir). Defaults to a fresh temp dir."
                   }
                 },
                 "default": {}

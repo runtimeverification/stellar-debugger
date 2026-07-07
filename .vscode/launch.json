@@ -7,17 +7,10 @@
       "request": "launch",
       "args": [
       "--extensionDevelopmentPath=${workspaceFolder}",
-      "${workspaceFolder}"
+      "${workspaceFolder}/examples"
       ],
       "outFiles": ["${workspaceFolder}/dist/**/*.js"],
       "preLaunchTask": "${defaultBuildTask}"
-    },
-    {
-      "name": "Soroban: Replay sample trace",
-      "type": "soroban",
-      "request": "launch",
-      "rawTrace": "${workspaceFolder}/test/fixtures/add.trace.jsonl",
-      "function": "add"
     }
   ]
 }

@@ -43,7 +43,7 @@ export class TurnkeyPipeline {
         command: args.node?.command,
         host,
         port,
-        stateFile: args.node?.stateFile,
+        ioDir: args.node?.ioDir,
       });
       this.process.start(report);
     }
@@ -73,15 +73,26 @@ export class TurnkeyPipeline {
     report(`Creating contract ${create.contractId} ...`);
     await client.sendTransaction(create.envelopeXdr);
 
-    // 6. Invoke with tracing.
+    // 6. Invoke, then fetch its trace by hash. The node submits the envelope
+    // (sendTransaction) and exposes the per-instruction trace separately via
+    // traceTransaction(hash); the final status comes from getTransaction(hash).
     const scvalArgs = encodeArgs(args.args);
     report(`Invoking ${args.function}(${(args.args ?? []).map((a) => JSON.stringify(a.value)).join(', ')}) with trace ...`);
     const invokeXdr = txBuilder.buildInvoke(source, create.contractId, args.function, scvalArgs);
-    const { trace, result } = await client.traceTransaction(invokeXdr);
+    const sent = await client.sendTransaction(invokeXdr);
 
+    const result = await client.getTransaction(sent.hash);
     if (result.status === 'FAILED') {
-      throw new Error(`Invocation failed on the node (status FAILED).`);
+      throw new Error(
+        `Invocation of ${args.function}(...) failed on komet-node (status FAILED, tx ${sent.hash}). ` +
+          `Note: the current komet-node only completes contract calls that return no value — ` +
+          `its callTx handling asserts a Void result, so any function returning a value gets ` +
+          `stuck and the transaction is reported FAILED. Try a function that returns () / no value, ` +
+          `or update komet-node.`,
+      );
     }
+
+    const trace = await client.traceTransaction(sent.hash);
 
     // 7. Parse trace into the replay model.
     const records = parseTraceJsonl(trace);
