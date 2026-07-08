@@ -75,6 +75,25 @@ describe('SorobanDebugSession (DAP replay)', () => {
     assert.strictEqual((stopped as DebugProtocol.StoppedEvent).body.reason, reason);
   }
 
+  /**
+   * Walk backward at instruction granularity until the cursor clamps at the
+   * first visible record, returning the top frame there. Statement-stop
+   * filtering (S17/S18) moves the ENTRY stop off the trace head (adder's
+   * #[contractimpl] :12 run starts are dropped, so entry is the :16 body), so
+   * instruction-level head tests re-anchor with this.
+   */
+  async function rewindToFirstVisible(): Promise<DebugProtocol.StackFrame> {
+    const INSTR = { ...THREAD, granularity: 'instruction' as const };
+    let prev = '';
+    let frame = await topFrame();
+    while (frame.name !== prev) {
+      prev = frame.name;
+      await stopAfter(dc.stepBackRequest(INSTR), 'step');
+      frame = await topFrame();
+    }
+    return frame;
+  }
+
   it('advertises reverse debugging and stepping granularity', async () => {
     const res = await dc.initializeRequest();
     assert.strictEqual(res.body?.supportsStepBack, true);
@@ -125,16 +144,16 @@ describe('SorobanDebugSession (DAP replay)', () => {
   });
 
   describe('with DWARF symbols (rawTrace + wasmPath)', () => {
-    it('stops at entry on the first line-run start with a mapped frame (S1/I3)', async () => {
+    it('stops at entry on the first statement stop with a mapped frame (S1/I3/S17)', async () => {
       await launchAndStop(WITH_WASM);
-      // Records 0..5 are invisible (unvalidated global initializers and
-      // pos-null synthetics): the entry stop skips them and lands on record 6,
-      // the first run start (lib.rs:12), with a real instruction pointer.
+      // The :12 run starts (records 6, 40) are the #[contractimpl] export shim,
+      // dropped by S17: the entry stop lands on the first surviving statement
+      // stop, the body `a + b` (lib.rs:16, record 29), with a real IP.
       const frame = await topFrame();
       assert.ok(frame.source?.path?.endsWith(LIB_RS_SUFFIX), `unexpected source: ${frame.source?.path}`);
-      assert.strictEqual(frame.line, 12);
-      assert.ok(frame.name.includes('[6/40]'), `unexpected frame name: ${frame.name}`);
-      assert.strictEqual(frame.instructionPointerReference, '0x5');
+      assert.strictEqual(frame.line, 16);
+      assert.ok(frame.name.includes('[29/40]'), `unexpected frame name: ${frame.name}`);
+      assert.strictEqual(frame.instructionPointerReference, '0x2d');
     });
 
     it('verifies, forward-slides, and rejects Rust-line breakpoints', async () => {
@@ -154,33 +173,69 @@ describe('SorobanDebugSession (DAP replay)', () => {
       assert.strictEqual(bps[2].message, 'No executed code maps to this line in the recorded trace.');
     });
 
-    it('runs to a Rust breakpoint, line-steps off it, and reverse-continues back', async () => {
+    it('runs to a Rust breakpoint from the head, and reverse-continues back to the run start', async () => {
       await launchWithBreakpoints(WITH_WASM, [16]);
-
+      // Entry already sits on the :16 run start (29); rewind to the trace head
+      // so continue can hit the breakpoint once (not once per record).
+      await rewindToFirstVisible();
       await stopAfter(dc.continueRequest(THREAD), 'breakpoint');
       let frame = await topFrame();
       assert.ok(frame.source?.path?.endsWith(LIB_RS_SUFFIX), `unexpected source: ${frame.source?.path}`);
       assert.strictEqual(frame.line, 16);
       assert.ok(frame.name.includes('[29/40]'), `unexpected frame name: ${frame.name}`);
 
-      // Statement granularity: one step covers the whole lib.rs:16 run.
+      // Statement granularity: the :16 body is the only statement stop, so a
+      // step stays put on it (the :12 shim runs are dropped by S17).
       await stopAfter(dc.nextRequest({ ...THREAD, granularity: 'statement' }), 'step');
       frame = await topFrame();
       assert.ok(frame.source?.path?.endsWith(LIB_RS_SUFFIX));
-      assert.strictEqual(frame.line, 12);
+      assert.strictEqual(frame.line, 16);
 
-      // S13: reverse lands on the same run START forward continue used (29),
-      // not on the run's last record (33).
+      // Move forward off the run start, then reverse-continue lands on the same
+      // run START (29), not on the run's last record (33).
+      await stopAfter(dc.stepInRequest({ ...THREAD, granularity: 'instruction' }), 'step');
       await stopAfter(dc.reverseContinueRequest(THREAD), 'breakpoint');
       frame = await topFrame();
       assert.strictEqual(frame.line, 16);
       assert.ok(frame.name.includes('[29/40]'), `unexpected frame name: ${frame.name}`);
     });
 
-    it('default-granularity next steps by Rust line', async () => {
+    it('S12/S13: a breakpoint on the S17-dropped #[contractimpl] line still resolves and fires at its run starts', async () => {
+      // lib.rs:12 is `#[contractimpl]` — its run starts (records 6, 40) are
+      // dropped from STATEMENT stepping by S17, so the cursor never RESTS on
+      // them. But breakpoint resolution is unchanged: a source breakpoint there
+      // must verify and fire at each :12 run start. This is the regression guard
+      // the reviewer flagged as missing — S17/S18 filtering must not leak into
+      // resolvedBreakpointIndices, or a breakpoint on a declaration/brace line
+      // would silently never fire.
+      const res = await launchWithBreakpoints(WITH_WASM, [12]);
+      assert.strictEqual(res.body.breakpoints[0].verified, true);
+      assert.strictEqual(res.body.breakpoints[0].line, 12);
+
+      // Entry sits on the :16 body (record 29, the sole statement stop).
+      // reverseContinue reaches the earlier :12 run start (record 6); forward
+      // continue then reaches the trailing one (record 40) — the S13 mirror,
+      // both on a line that statement stepping filters out.
+      await stopAfter(dc.reverseContinueRequest(THREAD), 'breakpoint');
+      let frame = await topFrame();
+      assert.strictEqual(frame.line, 12);
+      assert.ok(
+        frame.source?.path?.endsWith(LIB_RS_SUFFIX),
+        `unexpected source: ${frame.source?.path}`,
+      );
+      assert.ok(frame.name.includes('[6/40]'), `unexpected frame name: ${frame.name}`);
+
+      await stopAfter(dc.continueRequest(THREAD), 'breakpoint');
+      frame = await topFrame();
+      assert.strictEqual(frame.line, 12);
+      assert.ok(frame.name.includes('[40/40]'), `unexpected frame name: ${frame.name}`);
+    });
+
+    it('default-granularity next clamps on the single statement stop', async () => {
       await launchAndStop(WITH_WASM);
-      // The entry stop is already the lib.rs:12 run start (S1); a default-
-      // granularity next moves to the next run start, lib.rs:16 (record 29).
+      // The entry stop is the only statement stop, lib.rs:16 (record 29); the
+      // :12 #[contractimpl] runs are dropped by S17, so a default-granularity
+      // next has nowhere to advance and stays put (S2).
       await stopAfter(dc.nextRequest(THREAD), 'step');
       const frame = await topFrame();
       assert.ok(frame.source?.path?.endsWith(LIB_RS_SUFFIX), `unexpected source: ${frame.source?.path}`);
@@ -190,8 +245,10 @@ describe('SorobanDebugSession (DAP replay)', () => {
 
     it('instruction-granularity stepIn advances exactly one record', async () => {
       await launchAndStop(WITH_WASM);
-      const entry = await topFrame();
-      assert.ok(entry.name.includes('[6/40]'), `unexpected entry frame name: ${entry.name}`);
+      // Rewind to the first visible record (6) before pinning the head sequence
+      // — the statement entry now lands on record 29 (S17).
+      const entry = await rewindToFirstVisible();
+      assert.ok(entry.name.includes('[6/40]'), `unexpected head frame name: ${entry.name}`);
 
       await stopAfter(dc.stepInRequest({ ...THREAD, granularity: 'instruction' }), 'step');
       const frame = await topFrame();
@@ -262,10 +319,13 @@ describe('SorobanDebugSession (DAP replay)', () => {
       }
     }
 
-    /** Run to the lib.rs:16 breakpoint — the `i32.add` record at code offset 0x2d (pos 45). */
+    /**
+     * Land on the lib.rs:16 `i32.add` record (code offset 0x2d, pos 45). After
+     * S17 that record (29) is the sole statement stop, so the entry stop lands
+     * there directly — no continue needed.
+     */
     async function runToAdd(): Promise<void> {
-      await launchWithBreakpoints(WITH_WASM, [16]);
-      await stopAfter(dc.continueRequest(THREAD), 'breakpoint');
+      await launchAndStop(WITH_WASM);
     }
 
     it('advertises the disassemble request', async () => {
@@ -276,10 +336,11 @@ describe('SorobanDebugSession (DAP replay)', () => {
     describe('with wasm', () => {
       it('anchors the entry stop on a validated instruction address (S1/I3)', async () => {
         await launchAndStop(WITH_WASM);
-        // The entry stop skips the unvalidated head records (S1), so the very
-        // first frame already carries a validated code offset (record 6, 0x5).
+        // The entry stop skips the unvalidated head records and the dropped
+        // #[contractimpl] shim (S1/S17), landing on the sole statement stop
+        // (record 29, the lib.rs:16 `i32.add`) with a validated code offset.
         const frame = await topFrame();
-        assert.strictEqual(frame.instructionPointerReference, '0x5');
+        assert.strictEqual(frame.instructionPointerReference, '0x2d');
       });
 
       it('reports the validated code offset of the stopped record', async () => {
@@ -423,12 +484,12 @@ describe('SorobanDebugSession (DAP replay)', () => {
 
     it('verifies a breakpoint on an executed instruction and stops there, both directions', async () => {
       await launchAndStop(WITH_WASM);
-      // 0x2d is the `i32.add` record (pos 45), a validated executed instruction.
+      // 0x2d is the `i32.add` record (pos 45), a validated executed instruction
+      // — and, after S17, the entry stop already sits on it (record 29).
       const res = await setInstructionBreakpoints([{ instructionReference: '0x2d' }]);
       assert.strictEqual(res.body.breakpoints.length, 1);
       assert.strictEqual(res.body.breakpoints[0].verified, true);
 
-      await stopAfter(dc.continueRequest(THREAD), 'breakpoint');
       let frame = await topFrame();
       assert.strictEqual(frame.instructionPointerReference, '0x2d');
 
@@ -452,10 +513,11 @@ describe('SorobanDebugSession (DAP replay)', () => {
         'No executed instruction at this address in the recorded trace.',
       );
 
-      // With only that breakpoint set, continue runs to the trace end.
+      // With only that (unverified) breakpoint set, continue settles on the
+      // last statement stop (record 29, :16) — never the trailing shim records.
       await stopAfter(dc.continueRequest(THREAD), 'step');
       const frame = await topFrame();
-      assert.ok(frame.name.includes('[40/40]'), `unexpected frame name: ${frame.name}`);
+      assert.ok(frame.name.includes('[29/40]'), `unexpected frame name: ${frame.name}`);
     });
 
     it('triggers on the validated record at an address, not a raw global-init pos', async () => {
@@ -466,6 +528,9 @@ describe('SorobanDebugSession (DAP replay)', () => {
       const res = await setInstructionBreakpoints([{ instructionReference: '0xb' }]);
       assert.strictEqual(res.body.breakpoints[0].verified, true);
 
+      // Record 9 precedes the entry stop (29, :16); rewind to the head so a
+      // forward continue can reach it.
+      await rewindToFirstVisible();
       await stopAfter(dc.continueRequest(THREAD), 'breakpoint');
       const frame = await topFrame();
       assert.strictEqual(frame.instructionPointerReference, '0xb');
@@ -482,7 +547,9 @@ describe('SorobanDebugSession (DAP replay)', () => {
       const res = await setInstructionBreakpoints([{ instructionReference: '0xb' }]);
       assert.strictEqual(res.body.breakpoints[0].verified, true);
 
-      // The 0xb record (index 9) precedes the lib.rs:16 record (i32.add).
+      // The 0xb record (index 9) precedes the lib.rs:16 record (i32.add, 29),
+      // which is the entry stop; rewind to the head to walk both in order.
+      await rewindToFirstVisible();
       await stopAfter(dc.continueRequest(THREAD), 'breakpoint');
       let frame = await topFrame();
       assert.strictEqual(frame.instructionPointerReference, '0xb');
@@ -504,9 +571,11 @@ describe('SorobanDebugSession (DAP replay)', () => {
       const cleared = await setInstructionBreakpoints([]);
       assert.deepStrictEqual(cleared.body.breakpoints, []);
 
+      // No breakpoints remain, so continue settles on the last statement stop
+      // (record 29, :16) — never the trailing #[contractimpl] shim records.
       await stopAfter(dc.continueRequest(THREAD), 'step');
       const frame = await topFrame();
-      assert.ok(frame.name.includes('[40/40]'), `unexpected frame name: ${frame.name}`);
+      assert.ok(frame.name.includes('[29/40]'), `unexpected frame name: ${frame.name}`);
     });
 
     it('applies the offset field to the instruction reference', async () => {

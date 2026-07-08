@@ -9,10 +9,12 @@
  *
  * Frame/depth note: control's #[contractimpl] export shim runs at depth 0 then
  * 1 (both lib.rs:20), the function body at depth 2, a called `bump` at depth 3.
- * Because `next` (step-over) only lands on stop points at depth <= the current
- * one, descending from the depth-0 entry into the body uses `stepIn` (which
- * lands on the next run start regardless of depth); `stepIn` therefore also
- * enumerates every statement stop in trace order, one per press.
+ * S17 drops the shim and the `pub fn` signature, so the entry stop (S1) now
+ * lands on the first body statement at depth 2. Because `next` (step-over) only
+ * lands on stop points at depth <= the current one, `stepIn` (the next run
+ * start regardless of depth) is what descends into the depth-3 `bump` body;
+ * `stepIn` therefore also enumerates every statement stop in trace order, one
+ * per press.
  */
 
 import * as assert from 'assert';
@@ -116,25 +118,24 @@ describe('Control-flow stepping (docs/stepping.md, DAP level)', () => {
   const asPairs = (stops: Stop[]): [number, number][] => stops.map((s) => [s.index, s.line]);
 
   describe('seq — straight-line sequence', () => {
-    it('S1/S16: entry lands on the export shim (lib.rs:20) with source', async () => {
+    it('S1/S16/S17: entry lands on the first body statement (lib.rs:24), not the shim', async () => {
+      // S17 drops the #[contractimpl] export shim (:20) and the `pub fn seq`
+      // signature (:23), so the entry stop rests on the first real statement.
       const entry = await launchAndStop(control('seq'));
-      expect(entry, { index: 6, line: 20, file: CONTROL_LIB_SUFFIX });
+      expect(entry, { index: 236, line: 24, file: CONTROL_LIB_SUFFIX });
     });
 
-    it('S4/S5: statement stops are shim, three assignments, return — strictly increasing in the body', async () => {
+    it('S4/S5: statement stops are the three assignments and return brace — strictly increasing', async () => {
       const stops = await walkStepIn(control('seq'));
       assert.deepStrictEqual(asPairs(stops), [
-        [6, 20],
-        [21, 20],
-        [219, 23],
         [236, 24],
         [249, 25],
         [262, 26],
         [265, 28],
       ]);
-      // The function body's own lines strictly increase (23,24,25,26,28): a
-      // pure sequence stops once per statement, never re-visiting a line.
-      const bodyLines = stops.filter((s) => s.index >= 219).map((s) => s.line);
+      // The body lines strictly increase (24,25,26,28): a pure sequence stops
+      // once per statement, never re-visiting a line.
+      const bodyLines = stops.map((s) => s.line);
       for (let i = 1; i < bodyLines.length; i++) {
         assert.ok(bodyLines[i] > bodyLines[i - 1], `line ${bodyLines[i]} did not increase past ${bodyLines[i - 1]}`);
       }
@@ -145,9 +146,6 @@ describe('Control-flow stepping (docs/stepping.md, DAP level)', () => {
     it('S4/S5: the else arm (:36) is a stop and the then arm (:34) NEVER appears', async () => {
       const stops = await walkStepIn(control('branch'));
       assert.deepStrictEqual(asPairs(stops), [
-        [6, 20],
-        [21, 20],
-        [219, 31],
         [226, 33],
         [244, 36],
         [245, 33],
@@ -164,9 +162,6 @@ describe('Control-flow stepping (docs/stepping.md, DAP level)', () => {
     it('S6: the loop body line :44 is a fresh statement stop each iteration (>=3 times)', async () => {
       const stops = await walkStepIn(control('count'));
       assert.deepStrictEqual(asPairs(stops), [
-        [6, 20],
-        [21, 20],
-        [219, 42],
         [228, 43],
         [233, 44],
         [400, 45],
@@ -186,33 +181,29 @@ describe('Control-flow stepping (docs/stepping.md, DAP level)', () => {
   });
 
   describe('while_call — `while` with a real `bump` call', () => {
-    // Statement stops (index=line@depth): ... 243=56@2 249=15@3 266=16@3
+    // Post-S17/S18 statement stops (index=line@depth): ... 243=56@2 266=16@3
     // 278=18@3 291=57@2 ... The call line :56 sits at depth 2; bump's body
-    // (:15/:16/:18) at depth 3.
+    // (:16) and epilogue brace (:18) at depth 3. The `fn bump` signature :15 is
+    // dropped by S17 (bump has a real body statement, so the exception does not
+    // apply).
 
     it('S4/S5/S6/S8: stepIn enumerates every stop, descending into bump each iteration', async () => {
       const stops = await walkStepIn(control('while_call'));
       assert.deepStrictEqual(asPairs(stops), [
-        [6, 20],
-        [21, 20],
-        [219, 52],
         [228, 53],
         [231, 54],
         [234, 55],
         [243, 56],
-        [249, 15],
         [266, 16],
         [278, 18],
         [291, 57],
         [305, 55],
         [314, 56],
-        [320, 15],
         [337, 16],
         [349, 18],
         [362, 57],
         [376, 55],
         [385, 56],
-        [391, 15],
         [408, 16],
         [420, 18],
         [433, 57],
@@ -220,22 +211,25 @@ describe('Control-flow stepping (docs/stepping.md, DAP level)', () => {
         [456, 59],
         [459, 60],
       ]);
-      // bump's entry line :15 is visited exactly once per loop iteration (3x).
-      assert.strictEqual(stops.filter((s) => s.line === 15).length, 3);
+      // bump's first body line :16 is visited exactly once per loop iteration (3x).
+      assert.strictEqual(stops.filter((s) => s.line === 16).length, 3);
+      // The dropped `fn bump` signature :15 never surfaces as a stop (S17).
+      assert.strictEqual(stops.filter((s) => s.line === 15).length, 0);
     });
 
-    it('S4: stepIn at the call line :56 descends into bump body :15', async () => {
+    it('S4: stepIn at the call line :56 descends into bump body :16', async () => {
       await launchAndStop(control('while_call'));
-      // stepIn six times to reach the first call line (:56, index 243).
-      expect(await stmtStepIn(6), { index: 243, line: 56 });
+      // Entry is the first body statement (:53); stepIn three times to reach the
+      // first call line (:56, index 243).
+      expect(await stmtStepIn(3), { index: 243, line: 56 });
       const stop = await stopAfter(dc.stepInRequest(STMT));
-      expect(stop, { index: 249, line: 15, file: CONTROL_LIB_SUFFIX });
+      expect(stop, { index: 266, line: 16, file: CONTROL_LIB_SUFFIX });
     });
 
     it('S5/I1: next at the call line :56 steps OVER bump to :57 in one press', async () => {
       await launchAndStop(control('while_call'));
-      expect(await stmtStepIn(6), { index: 243, line: 56 });
-      // bump's records (:15/:16/:18) are one frame deeper and its return is
+      expect(await stmtStepIn(3), { index: 243, line: 56 });
+      // bump's records (:16/:18) are one frame deeper and its return is
       // implicit (no return record); one `next` must skip the whole call.
       const stop = await stopAfter(dc.nextRequest(STMT));
       expect(stop, { index: 291, line: 57, file: CONTROL_LIB_SUFFIX });
@@ -243,8 +237,8 @@ describe('Control-flow stepping (docs/stepping.md, DAP level)', () => {
 
     it('S7/S8: stepOut from inside bump returns to the caller line :57 (implicit return)', async () => {
       await launchAndStop(control('while_call'));
-      expect(await stmtStepIn(6), { index: 243, line: 56 });
-      expect(await stopAfter(dc.stepInRequest(STMT)), { index: 249, line: 15 });
+      expect(await stmtStepIn(3), { index: 243, line: 56 });
+      expect(await stopAfter(dc.stepInRequest(STMT)), { index: 266, line: 16 });
       // Despite no `return` record, stepOut unwinds the deeper bump frame and
       // lands on the next shallower run start (:57).
       const stop = await stopAfter(dc.stepOutRequest(STMT));
@@ -256,9 +250,6 @@ describe('Control-flow stepping (docs/stepping.md, DAP level)', () => {
     it('S4/S5: only the taken arm (:66) stops; arms :65 and :67 NEVER appear', async () => {
       const stops = await walkStepIn(control('choose'));
       assert.deepStrictEqual(asPairs(stops), [
-        [6, 20],
-        [21, 20],
-        [219, 63],
         [228, 64],
         [240, 66],
         [243, 69],

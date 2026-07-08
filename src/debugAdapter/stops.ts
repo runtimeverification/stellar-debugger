@@ -111,6 +111,125 @@ export function computeDepths(
   return depths;
 }
 
+/**
+ * The syntactic role of a source line, used to filter statement-granularity
+ * stop points (S17/S18). Classification is purely textual — it never touches
+ * the trace — so it is trivially unit-testable and independent of any mapper.
+ */
+export type LineRole = 'attribute' | 'signature' | 'brace' | 'statement';
+
+/** `fn` item header with any leading pub/const/async/unsafe/extern qualifiers. */
+const SIGNATURE_RE =
+  /^(pub(\s*\([^)]*\))?\s+)?(const\s+|async\s+|unsafe\s+|extern(\s+"[^"]*")?\s+)*fn\b/;
+/** `impl` / `trait` / `mod` item headers. */
+const ITEM_RE = /^(impl|trait|mod)\b/;
+/** Attribute lines: `#[...]` and inner `#![...]` (includes the export shim). */
+const ATTRIBUTE_RE = /^#!?\[/;
+/** A bare block-closing brace, optionally followed by `,` or `;`. */
+const BRACE_RE = /^}[,;]?$/;
+
+/**
+ * Classify a raw source line by its role (S17/S18). A null line (no source
+ * text available) is treated as a plain statement — never filtered — so a
+ * missing source file can never suppress a stop.
+ */
+export function classifyLineRole(text: string | null): LineRole {
+  if (text === null) {
+    return 'statement';
+  }
+  const trimmed = text.trim();
+  if (ATTRIBUTE_RE.test(trimmed)) {
+    return 'attribute';
+  }
+  if (SIGNATURE_RE.test(trimmed) || ITEM_RE.test(trimmed)) {
+    return 'signature';
+  }
+  if (BRACE_RE.test(trimmed)) {
+    return 'brace';
+  }
+  return 'statement';
+}
+
+/**
+ * Filter raw run starts down to statement-granularity stop points (S17/S18).
+ *
+ * Attribute lines (the `#[contractimpl]` export shim) are always glue and
+ * dropped. A `fn`/`impl`/`trait`/`mod` signature is dropped unless it is its
+ * frame's sole run start (a fully collapsed one-line function still needs a
+ * step-in target). A closing brace is dropped unless it is the function's
+ * final brace — the epilogue the return is attributed to. If filtering would
+ * remove every stop, the unfiltered run starts stand (preserving S1/S2/S3).
+ */
+export function statementStops(
+  runStarts: readonly number[],
+  depths: readonly number[],
+  roleAt: (index: number) => LineRole,
+): number[] {
+  /** A brace run start is kept iff it is the frame's final brace (S18). */
+  const keepBrace = (p: number): boolean => {
+    const d = depths[runStarts[p]];
+    return p === runStarts.length - 1 || depths[runStarts[p + 1]] < d;
+  };
+  /** Whether a run start at position q is itself a kept (surviving) stop. */
+  const isKeptStop = (q: number): boolean => {
+    const r = roleAt(runStarts[q]);
+    return r === 'statement' || (r === 'brace' && keepBrace(q));
+  };
+  /**
+   * Whether this frame holds another kept stop at the SAME depth — scanning
+   * both directions and stopping at the frame boundary (a run start shallower
+   * than d, i.e. the caller). A signature is kept only when it is the sole run
+   * start of its frame (S17 exception), which is a bidirectional property: an
+   * epilogue signature that trails an earlier same-depth body statement must
+   * still be dropped, so a forward-only look-ahead is not enough.
+   */
+  const otherSameDepthStopInFrame = (p: number): boolean => {
+    const d = depths[runStarts[p]];
+    for (let q = p + 1; q < runStarts.length; q++) {
+      const dq = depths[runStarts[q]];
+      if (dq < d) {
+        break; // frame returned to the caller
+      }
+      if (dq === d && isKeptStop(q)) {
+        return true;
+      }
+    }
+    for (let q = p - 1; q >= 0; q--) {
+      const dq = depths[runStarts[q]];
+      if (dq < d) {
+        break; // frame began after the caller
+      }
+      if (dq === d && isKeptStop(q)) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  const result: number[] = [];
+  for (let p = 0; p < runStarts.length; p++) {
+    const i = runStarts[p];
+    const r = roleAt(i);
+    if (r === 'attribute') {
+      continue;
+    } else if (r === 'statement') {
+      result.push(i);
+    } else if (r === 'brace') {
+      if (keepBrace(p)) {
+        result.push(i);
+      }
+    } else if (r === 'signature') {
+      if (!otherSameDepthStopInFrame(p)) {
+        result.push(i);
+      }
+    }
+  }
+  if (result.length === 0 && runStarts.length > 0) {
+    return [...runStarts];
+  }
+  return result;
+}
+
 /** Index of the sorted range containing `pos`, or -1 when outside all of them. */
 function functionIndexAt(ranges: readonly FunctionRange[], pos: number): number {
   let lo = 0;

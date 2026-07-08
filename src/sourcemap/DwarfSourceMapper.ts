@@ -35,7 +35,10 @@ interface FileLines {
 export class DwarfSourceMapper implements SourceMapper {
   private readonly lineTable: DwarfLineTable;
   private readonly fileExists: (p: string) => boolean;
+  private readonly readFile: (p: string) => string;
   private readonly existsCache = new Map<string, boolean>();
+  /** Per normalized path: file split into lines, or null on read failure. */
+  private readonly linesCache = new Map<string, string[] | null>();
   /** Precomputed location per trace index (null = unmapped). */
   private readonly locations: (MappedLocation | null)[];
   /** Executed mapped lines, grouped by normalized file path. */
@@ -46,9 +49,11 @@ export class DwarfSourceMapper implements SourceMapper {
     lineTable: DwarfLineTable,
     validPos: (number | null)[],
     fileExists: (p: string) => boolean = fs.existsSync,
+    readFile: (p: string) => string = (p) => fs.readFileSync(p, 'utf8'),
   ) {
     this.lineTable = lineTable;
     this.fileExists = fileExists;
+    this.readFile = readFile;
 
     this.locations = validPos.map((pos) => (pos === null ? null : this.mapEntry(lineTable.lookup(pos))));
 
@@ -109,6 +114,33 @@ export class DwarfSourceMapper implements SourceMapper {
   lineKeyForIndex(index: number): string | null {
     const loc = this.locations[index] ?? null;
     return loc === null ? null : `${loc.path}:${loc.line}`;
+  }
+
+  sourceTextForIndex(index: number): string | null {
+    const loc = this.locations[index] ?? null;
+    if (loc === null) {
+      return null;
+    }
+    const lines = this.cachedLines(loc.path);
+    if (lines === null) {
+      return null;
+    }
+    return lines[loc.line - 1] ?? null;
+  }
+
+  /** Read and split a source file once per normalized path; null on failure. */
+  private cachedLines(p: string): string[] | null {
+    if (this.linesCache.has(p)) {
+      return this.linesCache.get(p) ?? null;
+    }
+    let lines: string[] | null;
+    try {
+      lines = this.readFile(p).split('\n');
+    } catch {
+      lines = null;
+    }
+    this.linesCache.set(p, lines);
+    return lines;
   }
 
   /** Filter and normalize a line-table entry into a displayable location. */

@@ -49,4 +49,6 @@ export interface SourceMapper {
   executedLines(path: string, fromLine: number, toLine: number): number[];
   /** Stable '<path>:<line>' equality key for line stepping, or null. */
   lineKeyForIndex(index: number): string | null;
+  /** Raw source text of the line the record at `index` maps to, or null. */
+  sourceTextForIndex(index: number): string | null;
 }

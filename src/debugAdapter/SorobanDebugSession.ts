@@ -23,7 +23,7 @@ import {
 import { DebugProtocol } from '@vscode/debugprotocol';
 import * as path from 'path';
 import { TraceModel } from './TraceModel';
-import { computeDepths, computeRunStarts } from './stops';
+import { classifyLineRole, computeDepths, computeRunStarts, statementStops } from './stops';
 import { SourceMapper } from '../sourcemap/SourceMapper';
 import { Disassembly } from '../wasm/Disassembly';
 import { ResolvedTrace, SessionBackend, SorobanLaunchArgs } from './types';
@@ -57,8 +57,20 @@ export class SorobanDebugSession extends DebugSession {
   private depths: number[] = [];
   /** Instruction-granularity stop points: the visible record indices, sorted. */
   private visibleIndices: number[] = [];
-  /** Statement-granularity stop points: the line-run starts, sorted. */
+  /**
+   * Statement-granularity stop points: the line-run starts AFTER S17/S18
+   * declaration/brace filtering. This is where statement stepping, the entry
+   * stop, and the first/last-stop clamps come to rest.
+   */
   private runStarts: number[] = [];
+  /**
+   * The RAW line-run starts (one index per line execution, pre-S17/S18). Used
+   * only to narrow source breakpoints to a single index per run (S12/S13):
+   * breakpoint resolution is unchanged by S17/S18, so a breakpoint on a
+   * declaration/brace line whose statement stops are filtered out must still
+   * fire at its raw run starts.
+   */
+  private rawRunStarts: number[] = [];
 
   /** Resolves when the client has finished configuring (e.g. breakpoints). */
   private configurationDone!: Promise<void>;
@@ -136,7 +148,10 @@ export class SorobanDebugSession extends DebugSession {
       });
       const source = this.source;
       this.depths = computeDepths(this.model.records, this.positions, this.disassembly.functionRanges);
-      this.runStarts = computeRunStarts(this.positions, this.depths, (i) => source.lineKeyForIndex(i));
+      this.rawRunStarts = computeRunStarts(this.positions, this.depths, (i) => source.lineKeyForIndex(i));
+      this.runStarts = statementStops(this.rawRunStarts, this.depths, (i) =>
+        classifyLineRole(source.sourceTextForIndex(i)),
+      );
 
       if (this.model.isEmpty) {
         this.sendErrorResponse(response, 2001, 'The trace is empty; nothing to debug.');
@@ -246,7 +261,10 @@ export class SorobanDebugSession extends DebugSession {
   private resolvedBreakpointIndices(): Set<number> {
     const indices = new Set<number>();
     if (this.source) {
-      const runStartSet = new Set(this.runStarts);
+      // Narrow against the RAW run starts, not the S17/S18-filtered statement
+      // stops: breakpoint resolution is unchanged by declaration/brace
+      // filtering, so a breakpoint on a filtered line still fires once per run.
+      const runStartSet = new Set(this.rawRunStarts);
       for (const [file, breakpoints] of this.sourceBreakpoints) {
         for (const bp of breakpoints) {
           const resolved = this.source.resolveBreakpoint(file, bp.line);

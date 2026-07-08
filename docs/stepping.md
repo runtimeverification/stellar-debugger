@@ -45,19 +45,25 @@ Every stepping decision is derived from four per-record facts:
   the initial loop entry plus one per re-test of the `while` condition.
 
 **Stop points.** At instruction granularity the stop points are the visible
-records. At statement granularity the stop points are the run starts. The
-cursor must only ever come to rest on a stop point of the active granularity —
-never on an invisible record, and (at statement granularity) never on an
-unmapped one, except when the trace contains no stop point at all.
+records. At statement granularity the stop points are the run starts that
+survive *declaration/brace filtering* (S17, S18): a debugger user expects to
+rest on statements and expressions, not on `fn`/`impl` headers, the
+`#[contractimpl]` export shim, or block-closing braces. The cursor must only
+ever come to rest on a stop point of the active granularity — never on an
+invisible record, and (at statement granularity) never on an unmapped or
+filtered-out one, except when filtering would leave the trace (or a function
+frame) with no stop point at all.
 
 ## Rules
 
 ### Session start and run boundaries
 
 - **S1** (entry stop): the initial stop lands on the first stop point of the
-  trace — the first run start when line info exists, else the first visible
-  record, else index 0. The user's first view is never a sourceless,
-  addressless frame.
+  trace — the first statement stop (the first declaration/brace-filtered run
+  start, S17/S18) when line info exists, else the first visible record, else
+  index 0. The user's first view is a real statement inside the invoked
+  function, never the `#[contractimpl]` export shim or a bare signature line,
+  and never a sourceless, addressless frame.
 - **S2** (forward exhaustion): a forward step (any kind, any granularity) with
   no further stop point ahead moves to the **last** stop point of the trace
   (staying put when already there) and still reports a stop. It never
@@ -125,6 +131,43 @@ unmapped one, except when the trace contains no stop point at all.
   sourceless only when the cursor legitimately rests on an unmapped stop point
   (instruction granularity, or no line info at all).
 
+### Statement stops: declarations and braces
+
+Optimization-level 0 preserves a line-table row for lines a user does not think
+of as steppable — the `fn`/`impl` header a function is entered "at", the
+`#[contractimpl]` macro shim that wraps every exported entry point, and the
+closing brace the compiler attributes a function's return/epilogue to. Left
+unfiltered these produce stops on declarations and lone braces, which read as
+noise. Statement-granularity stop points are therefore the run starts minus the
+following (instruction granularity is unaffected — every visible record remains
+an instruction stop):
+
+- **S17** (declaration suppression): a run start whose source line is a
+  *declaration* — an attribute line (trimmed text begins `#[` or `#![`,
+  including the `#[contractimpl]` export shim) or an item header (`fn`, with any
+  `pub`/`const`/`async`/`unsafe`/`extern` qualifiers; `impl`; `trait`; `mod`) —
+  is not a statement stop. Step-in therefore lands on a function's first real
+  body statement, and the session's entry stop (S1) never rests on the export
+  shim or a signature line. **Exception:** when a declaration line is the *only*
+  run start of its function-body frame — a fully collapsed one-line function
+  whose body shares the signature's line (common above opt-0) — it is kept, so
+  step-in still has a target and S4/S16 hold. Attribute lines are never kept by
+  this exception (the export shim is always glue); only `fn`/`impl` headers are.
+- **S18** (brace suppression): a run start whose source line is a bare closing
+  brace (trimmed text is `}`, `};`, or `},`) is not a statement stop **unless**
+  it is the function's *final* brace — the epilogue the return is attributed to,
+  recognized as a brace run start immediately followed (in run order) by a
+  shallower-depth run start, or by nothing. That single epilogue brace is kept
+  as the one place to inspect the return value before the frame unwinds; every
+  inner block-closing brace is suppressed. When a frame's epilogue is instead
+  attributed to a declaration line (macro-generated export wrappers map their
+  return to `#[contractimpl]`), S17 governs and no epilogue stop is kept for it.
+
+Filtering never empties the trace: if it would remove every stop, the unfiltered
+run starts stand (preserving S1/S2/S3). Breakpoints and instruction-granularity
+stepping are unchanged — S17/S18 shape only where statement stepping comes to
+rest.
+
 ## Build prerequisite: optimization level
 
 Statement stepping is only as good as the DWARF line table the build emits, and
@@ -157,40 +200,46 @@ crate's production `opt-level` for the debug build only — the crate's
 - `test/fixtures/stepper-debug.{wasm,trace.jsonl}` — `sum_triples(3)` on
   `examples/stepper`: a real `call` to an `#[inline(never)]` helper **with
   implicit return** (no `return` record — S5, S7, S8), and a 3-iteration
-  `while` loop (S6, S9, S12, S13, S15). Ground truth (record ↦ line):
-  entry shim = lib.rs:20, loop condition = lib.rs:25 (records 21–26, 39–43,
-  56–60, 73–77), call line = lib.rs:26 (27–28, 44–45, 61–62), callee body =
-  lib.rs:15 (29–31, 46–48, 63–65), epilogue `return` = lib.rs:20 (84).
-  Correct depths: callee records 29–31/46–48/63–65 are one frame deeper than
-  the surrounding loop records; the trace both enters and leaves `triple`
-  three times.
+  `while` loop (S6, S9, S12, S13, S15). Built above opt-0, so `triple`'s body
+  collapses onto its signature line. Statement stops (trace index ↦ line):
+  21 (:25 `while`), 27 (:26 call line), **29 (:15 `triple`)**, 39/44 (:25/:26),
+  46 (:15), 56/61 (:25/:26), 63 (:15), 73 (:25). The `#[contractimpl]` shim
+  (record 5, :20) and the epilogue that maps back to it (record 84, :20) are
+  dropped by S17; `triple`'s only line is its `fn` signature, kept by the S17
+  sole-frame-stop exception so step-in still lands (records 29/46/63 are one
+  frame deeper — the trace enters and leaves `triple` three times).
 
 - `test/fixtures/control-debug.wasm` + `control-{seq,branch,count,while_call,choose}.trace.jsonl`
   — one opt-0 wasm (`examples/control`) shared by five traces, each isolating a
   Rust construct so the suite pins how source stepping crosses it. All five
-  functions live in `impl Control` (the `#[contractimpl]` export shim maps to
-  `lib.rs:20`, entered at depths 0 then 1; the function body runs at depth 2, a
-  called `bump` at depth 3). Statement-stop ground truth (trace index ↦ line):
-  - **seq(7)** — pure sequence: 6/21 (:20 shim), 219 (:23 sig), 236 (:24 `let a`),
-    249 (:25 `let b`), 262 (:26 `let c`), 265 (:28 return). Lines strictly
-    increase; one stop each (S4/S5 basics, no re-execution).
-  - **branch(3)** — if/else, `3 <= 10` so the **else** arm runs: 219 (:31 sig),
-    226 (:33 `if`), 244 (:36 else arm), 245 (:33 merge), 246 (:38 `r`), 248
-    (:39). The **then** arm (`:34`) never appears — stepping enters only the
-    taken arm.
-  - **count(3)** — `for i in 0..3`: 219 (:42 sig), 228 (:43 `let acc`), then the
-    `for` header (:44) and the body `acc += i` (:45) alternate per iteration (:44
-    at 233/414/561/708 — three iterations plus the terminating `next() -> None`
-    check; :45 at 400/547/694 — the body), 805 (:47 `acc`), 808 (:48). The body
-    line stops exactly once per iteration (S6/S12) — the defining loop behavior.
-  - **while_call(3)** — `while` + a real `bump` call: 52/53/54 setup, then per
-    iteration 55 (`while`), 56 (`acc += bump(i)`), **15/16/18 = `bump` body at
-    depth 3**, 57 (`i += 1`); three times; then 55 (final test), 59/60. `stepIn`
-    at :56 descends to :15; `next` at :56 steps over to :57 (S4 vs S5); the
+  functions live in `impl Control`; the `#[contractimpl]` export shim (:20, at
+  depths 0 then 1) and each `pub fn` signature are dropped by S17, so the body
+  (depth 2, a called `bump` at depth 3) is where stepping rests. Statement-stop
+  ground truth (trace index ↦ line, post-S17/S18):
+  - **seq(7)** — pure sequence: 236 (:24 `let a`), 249 (:25 `let b`), 262 (:26
+    `let c`), 265 (:28 `}` epilogue kept by S18). Body lines strictly increase;
+    one stop each (S4/S5 basics, no re-execution). Dropped: 6/21 (:20 shim),
+    219 (:23 sig).
+  - **branch(3)** — if/else, `3 <= 10` so the **else** arm runs: 226 (:33 `if`),
+    244 (:36 else arm), 245 (:33 merge), 246 (:38 `r`), 248 (:39 `}`). The
+    **then** arm (`:34`) never appears — stepping enters only the taken arm.
+  - **count(3)** — `for i in 0..3`: 228 (:43 `let acc`), then the `for` header
+    (:44) and the body `acc += i` (:45) alternate per iteration (:44 at
+    233/414/561/708 — three iterations plus the terminating `next() -> None`
+    check; :45 at 400/547/694 — the body), 805 (:47 `acc`), 808 (:48 `}`). The
+    body line stops exactly once per iteration (S6/S12) — the defining loop
+    behavior.
+  - **while_call(3)** — `while` + a real `bump` call: 228/231 (:53/:54 setup),
+    then per iteration 234 (:55 `while`), 243 (:56 `acc += bump(i)`), **266
+    (:16 `bump` body) / 278 (:18 `bump` `}` epilogue) at depth 3**, 291 (:57
+    `i += 1`); three times (266/278, 337/349, 408/420); then 447 (:55 final
+    test), 456/459 (:59 `acc` / :60 `}`). `stepIn` at :56 descends to the first
+    `bump` **statement** :16 — the `fn bump` signature (records 249/320/391,
+    :15) is dropped by S17; `next` at :56 steps over to :57 (S4 vs S5); the
     callee returns implicitly (no `return` record — S5/S7/S8).
-  - **choose(7)** — `match x % 3`, `7 % 3 == 1` so arm **`1 => 200`** runs: 219
-    (:63 sig), 228 (:64 `match`), 240 (:66 arm), 243 (:69 `r`), 245 (:70). Arms
-    `0 =>` (:65) and `_ =>` (:67) never appear.
+  - **choose(7)** — `match x % 3`, `7 % 3 == 1` so arm **`1 => 200`** runs: 228
+    (:64 `match`), 240 (:66 arm), 243 (:69 `r`), 245 (:70 `}`). Arms `0 =>`
+    (:65) and `_ =>` (:67) never appear.
 
 Regenerate all pairs together with `scripts/make-fixtures.sh`.
 

@@ -33,4 +33,8 @@ export class NullSourceMapper implements SourceMapper {
   lineKeyForIndex(_index: number): string | null {
     return null;
   }
+
+  sourceTextForIndex(_index: number): string | null {
+    return null;
+  }
 }
