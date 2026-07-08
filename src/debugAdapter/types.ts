@@ -8,16 +8,27 @@
 import { DebugProtocol } from '@vscode/debugprotocol';
 import { TraceModel } from './TraceModel';
 import { SourceMapper } from '../sourcemap/SourceMapper';
+import { Disassembly } from '../wasm/Disassembly';
 import { ScValArg } from '../soroban/scval';
 
 /** Attributes of a `soroban` launch configuration (mirrors package.json). */
 export interface SorobanLaunchArgs extends DebugProtocol.LaunchRequestArguments {
   /** Path to the contract crate (containing Cargo.toml). */
   contract?: string;
-  /** Path to a prebuilt .wasm (overrides building from `contract`). */
+  /**
+   * Path to a prebuilt .wasm (overrides building from `contract`). Also used
+   * with `rawTrace` for offline symbol-rich replay: the wasm supplies the
+   * disassembly and DWARF source mapping for a canned trace.
+   */
   wasmPath?: string;
   /** Build command used to produce the wasm. */
   buildCommand?: string;
+  /**
+   * Build the contract with DWARF debug info (default true): injects the
+   * cargo profile overrides that keep line tables in the wasm, enabling Rust
+   * source mapping. Set false to build untouched and debug at the wasm level.
+   */
+  debugInfo?: boolean;
   /** Function to invoke. */
   function: string;
   /** Declarative function arguments. */
@@ -44,6 +55,15 @@ export type ProgressReporter = (message: string) => void;
 export interface ResolvedTrace {
   model: TraceModel;
   source: SourceMapper;
+  /** Static disassembly of the traced contract (trace-derived when no wasm). */
+  disassembly: Disassembly;
+  /**
+   * Per-record code offset, parallel to `model.records`: the record's VALIDATED
+   * position in `disassembly`'s address space, or null for records without one
+   * (synthetic records, and records whose `pos` failed mnemonic validation,
+   * e.g. global initializers). Anchors the client's instruction pointer.
+   */
+  positions: (number | null)[];
   /** Optional human-readable invocation return value, for the debug console. */
   returnValue?: string;
 }

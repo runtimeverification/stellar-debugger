@@ -1,8 +1,10 @@
 /**
- * M1 backend: replay a precomputed JSONL trace from disk. Requires no komet-node
- * and no contract build — it exercises the entire DAP replay path end-to-end
- * from a captured trace file (the `rawTrace` launch attribute). Also the basis
- * for golden-trace integration tests.
+ * Replay backend: a precomputed JSONL trace from disk (the `rawTrace` launch
+ * attribute). Requires no komet-node and no contract build — it exercises the
+ * entire DAP replay path end-to-end from a captured trace file. With a
+ * matching `wasmPath` the replay is symbol-rich (real disassembly + DWARF
+ * source mapping); without one it degrades to trace-derived instructions and
+ * no source. Also the basis for golden-trace integration tests.
  *
  * Pure module (uses fs, no `vscode` imports).
  */
@@ -10,7 +12,9 @@
 import { promises as fs } from 'fs';
 import { parseTraceJsonl } from '../../komet/trace';
 import { TraceModel } from '../TraceModel';
-import { TraceListingSource } from '../../sourcemap/SourceMapper';
+import { Disassembly } from '../../wasm/Disassembly';
+import { NullSourceMapper } from '../../sourcemap/NullSourceMapper';
+import { buildDebugArtifacts } from '../artifacts';
 import { ProgressReporter, ResolvedTrace, SessionBackend, SorobanLaunchArgs } from '../types';
 
 export class RawTraceBackend implements SessionBackend {
@@ -22,8 +26,22 @@ export class RawTraceBackend implements SessionBackend {
     const jsonl = await fs.readFile(args.rawTrace, 'utf8');
     const records = parseTraceJsonl(jsonl);
     const model = new TraceModel(records);
-    const source = new TraceListingSource(model);
-    return { model, source };
+
+    if (args.wasmPath) {
+      report(`Reading contract wasm from ${args.wasmPath}`);
+      const wasm = await fs.readFile(args.wasmPath);
+      const { source, disassembly, positions } = buildDebugArtifacts(wasm, model, report);
+      return { model, source, disassembly, positions };
+    }
+    // Without wasm there is nothing to validate positions against; the raw
+    // `pos` values are used as-is, which is self-consistent because the
+    // trace-derived disassembly is built from those same values.
+    return {
+      model,
+      source: new NullSourceMapper(),
+      disassembly: Disassembly.fromTrace(model),
+      positions: records.map((rec) => rec.pos),
+    };
   }
 
   async dispose(): Promise<void> {

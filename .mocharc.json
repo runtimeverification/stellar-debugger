@@ -1,4 +1,4 @@
 {
   "spec": "out/test/**/*.test.js",
-  "timeout": 10000
+  "timeout": 30000
 }

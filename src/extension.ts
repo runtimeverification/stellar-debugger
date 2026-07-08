@@ -21,9 +21,6 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.debug.registerDebugConfigurationProvider('soroban', provider),
     vscode.debug.registerDebugAdapterDescriptorFactory('soroban', new SorobanAdapterFactory()),
     vscode.commands.registerCommand('soroban.debug', () => startDebugFromActiveEditor()),
-    vscode.commands.registerCommand('soroban.showWat', () => {
-      vscode.window.showInformationMessage('Soroban: disassembly view arrives in M4.');
-    }),
   );
 }
 

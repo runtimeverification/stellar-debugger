@@ -9,6 +9,14 @@
       "function": "add"
     },
     {
+      "name": "Soroban: Replay add(4, 3) with symbols",
+      "type": "soroban",
+      "request": "launch",
+      "rawTrace": "${workspaceFolder}/../test/fixtures/adder-debug.trace.jsonl",
+      "wasmPath": "${workspaceFolder}/../test/fixtures/adder-debug.wasm",
+      "function": "add"
+    },
+    {
       "name": "Soroban: Debug store(42)  [live pipeline]",
       "type": "soroban",
       "request": "launch",
@@ -37,6 +45,40 @@
       "function": "increment",
       "args": [
         { "value": 5, "type": "u32" }
+      ]
+    },
+    {
+      "name": "Soroban: Replay control while_call(3) with symbols",
+      "type": "soroban",
+      "request": "launch",
+      "rawTrace": "${workspaceFolder}/../test/fixtures/control-while_call.trace.jsonl",
+      "wasmPath": "${workspaceFolder}/../test/fixtures/control-debug.wasm",
+      "function": "while_call"
+    },
+    {
+      "name": "Soroban: Replay control count(3) with symbols",
+      "type": "soroban",
+      "request": "launch",
+      "rawTrace": "${workspaceFolder}/../test/fixtures/control-count.trace.jsonl",
+      "wasmPath": "${workspaceFolder}/../test/fixtures/control-debug.wasm",
+      "function": "count"
+    },
+    {
+      "name": "Soroban: Replay control branch(3) with symbols",
+      "type": "soroban",
+      "request": "launch",
+      "rawTrace": "${workspaceFolder}/../test/fixtures/control-branch.trace.jsonl",
+      "wasmPath": "${workspaceFolder}/../test/fixtures/control-debug.wasm",
+      "function": "branch"
+    },
+    {
+      "name": "Soroban: Debug control while_call(3)  [live pipeline]",
+      "type": "soroban",
+      "request": "launch",
+      "contract": "${workspaceFolder}/control",
+      "function": "while_call",
+      "args": [
+        { "value": 3, "type": "u32" }
       ]
     }
   ]

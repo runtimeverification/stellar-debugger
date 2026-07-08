@@ -21,10 +21,14 @@ import {
   Handles,
 } from '@vscode/debugadapter';
 import { DebugProtocol } from '@vscode/debugprotocol';
+import * as path from 'path';
 import { TraceModel } from './TraceModel';
+import { computeDepths, computeRunStarts } from './stops';
 import { SourceMapper } from '../sourcemap/SourceMapper';
+import { Disassembly } from '../wasm/Disassembly';
 import { ResolvedTrace, SessionBackend, SorobanLaunchArgs } from './types';
 import { TypedValue } from '../komet/trace';
+import { renderInstr } from '../komet/mnemonics';
 
 const THREAD_ID = 1;
 const FRAME_ID = 1;
@@ -39,13 +43,34 @@ export class SorobanDebugSession extends DebugSession {
   private readonly backend: SessionBackend;
   private model?: TraceModel;
   private source?: SourceMapper;
+  private disassembly?: Disassembly;
+  /** Per-record validated code offsets, parallel to the trace records. */
+  private positions: (number | null)[] = [];
+  /**
+   * Validated code offset → trace record indices, built from `positions` at
+   * launch. This is deliberately NOT TraceModel.posToIndices: that map holds
+   * raw `pos` values, which are ambiguous across sections (e.g. global
+   * initializers), and must never trigger an instruction breakpoint.
+   */
+  private validatedPosToIndices = new Map<number, number[]>();
+  /** Call depth per record (docs/stepping.md Model/depth), built at launch. */
+  private depths: number[] = [];
+  /** Instruction-granularity stop points: the visible record indices, sorted. */
+  private visibleIndices: number[] = [];
+  /** Statement-granularity stop points: the line-run starts, sorted. */
+  private runStarts: number[] = [];
 
   /** Resolves when the client has finished configuring (e.g. breakpoints). */
   private configurationDone!: Promise<void>;
   private signalConfigurationDone!: () => void;
 
-  /** Requested breakpoint lines, resolved to indices lazily via the source. */
-  private breakpointLines: number[] = [];
+  /**
+   * Source breakpoints as requested by the client, keyed by normalized file
+   * path. Re-resolved to trace indices on every use (cheap) via the mapper.
+   */
+  private readonly sourceBreakpoints = new Map<string, DebugProtocol.SourceBreakpoint[]>();
+  /** Instruction breakpoints as requested code offsets (verified or not). */
+  private instructionBreakpointAddrs: number[] = [];
   /** Container handles for structured variable expansion. */
   private readonly variableHandles = new Handles<TypedValue[]>();
 
@@ -66,6 +91,10 @@ export class SorobanDebugSession extends DebugSession {
     response.body = response.body ?? {};
     response.body.supportsConfigurationDoneRequest = true;
     response.body.supportsStepBack = true; // enables stepBack AND reverseContinue
+    response.body.supportsSteppingGranularity = true;
+    response.body.supportsDisassembleRequest = true;
+    response.body.supportsInstructionBreakpoints = true;
+    response.body.supportsBreakpointLocationsRequest = true;
     response.body.supportsTerminateRequest = true;
     response.body.supportsRestartRequest = false;
     // Note: the InitializedEvent is deliberately NOT sent here. We only signal
@@ -90,6 +119,24 @@ export class SorobanDebugSession extends DebugSession {
       const resolved: ResolvedTrace = await this.backend.resolve(args, (msg) => this.log(msg));
       this.model = resolved.model;
       this.source = resolved.source;
+      this.disassembly = resolved.disassembly;
+      this.positions = resolved.positions;
+      this.validatedPosToIndices = new Map();
+      this.visibleIndices = [];
+      this.positions.forEach((pos, i) => {
+        if (pos !== null) {
+          this.visibleIndices.push(i);
+          const list = this.validatedPosToIndices.get(pos);
+          if (list) {
+            list.push(i);
+          } else {
+            this.validatedPosToIndices.set(pos, [i]);
+          }
+        }
+      });
+      const source = this.source;
+      this.depths = computeDepths(this.model.records, this.positions, this.disassembly.functionRanges);
+      this.runStarts = computeRunStarts(this.positions, this.depths, (i) => source.lineKeyForIndex(i));
 
       if (this.model.isEmpty) {
         this.sendErrorResponse(response, 2001, 'The trace is empty; nothing to debug.');
@@ -108,7 +155,9 @@ export class SorobanDebugSession extends DebugSession {
       await this.configurationDone;
 
       this.sendResponse(response);
-      this.model.seek(0);
+      // S1: the entry stop lands on the first stop point, never on the
+      // invisible/unmapped records at the head of the trace.
+      this.model.seek(this.firstStopPoint());
       this.sendEvent(new StoppedEvent('entry', THREAD_ID));
     } catch (e) {
       this.sendErrorResponse(response, 2000, `Failed to start debug session: ${(e as Error).message}`);
@@ -120,26 +169,98 @@ export class SorobanDebugSession extends DebugSession {
     response: DebugProtocol.SetBreakpointsResponse,
     args: DebugProtocol.SetBreakpointsArguments,
   ): void {
-    const requested = args.breakpoints ?? (args.lines ?? []).map((line) => ({ line }));
-    this.breakpointLines = requested.map((bp) => bp.line);
+    const requested: DebugProtocol.SourceBreakpoint[] =
+      args.breakpoints ?? (args.lines ?? []).map((line) => ({ line }));
+    const sourcePath = args.source.path;
+    if (sourcePath !== undefined) {
+      // DAP semantics: each request carries ALL breakpoints for that source,
+      // so the stored entry is replaced wholesale.
+      this.sourceBreakpoints.set(path.normalize(sourcePath), requested);
+    }
 
-    const verified: DebugProtocol.Breakpoint[] = requested.map((bp) => ({
-      verified: this.source ? this.source.indicesForLine(bp.line).length > 0 : true,
-      line: bp.line,
-    }));
+    // The response is parallel to the request; a verified breakpoint may carry
+    // a line adjusted forward to the nearest executed one.
+    const breakpoints: DebugProtocol.Breakpoint[] = requested.map((bp) => {
+      if (sourcePath === undefined || !this.source || !this.source.hasLineInfo()) {
+        return { verified: false, line: bp.line };
+      }
+      const resolved = this.source.resolveBreakpoint(sourcePath, bp.line);
+      if (resolved === null) {
+        return {
+          verified: false,
+          line: bp.line,
+          message: 'No executed code maps to this line in the recorded trace.',
+        };
+      }
+      return { verified: true, line: resolved.line };
+    });
 
-    response.body = { breakpoints: verified };
+    response.body = { breakpoints };
     this.sendResponse(response);
   }
 
-  /** Resolve the current breakpoint lines to trace indices via the source. */
+  protected breakpointLocationsRequest(
+    response: DebugProtocol.BreakpointLocationsResponse,
+    args: DebugProtocol.BreakpointLocationsArguments,
+  ): void {
+    const sourcePath = args.source.path;
+    const lines =
+      sourcePath !== undefined && this.source
+        ? this.source.executedLines(sourcePath, args.line, args.endLine ?? args.line)
+        : [];
+    response.body = { breakpoints: lines.map((line) => ({ line })) };
+    this.sendResponse(response);
+  }
+
+  protected setInstructionBreakpointsRequest(
+    response: DebugProtocol.SetInstructionBreakpointsResponse,
+    args: DebugProtocol.SetInstructionBreakpointsArguments,
+  ): void {
+    // DAP semantics: each request carries ALL instruction breakpoints, so the
+    // stored list is replaced wholesale.
+    this.instructionBreakpointAddrs = args.breakpoints.map(
+      (bp) => parseAddress(bp.instructionReference) + (bp.offset ?? 0),
+    );
+
+    const breakpoints: DebugProtocol.Breakpoint[] = this.instructionBreakpointAddrs.map((addr) => {
+      const verified = this.validatedPosToIndices.has(addr);
+      return {
+        verified,
+        ...(verified
+          ? {}
+          : { message: 'No executed instruction at this address in the recorded trace.' }),
+      };
+    });
+
+    response.body = { breakpoints };
+    this.sendResponse(response);
+  }
+
+  /**
+   * Union of the trace indices all stored breakpoints resolve to. A source
+   * breakpoint stops once per EXECUTION of its line (S12): the mapper's
+   * per-record resolution is narrowed to the line-run starts, so forward and
+   * reverse continue agree on one index per run (S13). Instruction breakpoints
+   * stop on every record at their validated address (S15).
+   */
   private resolvedBreakpointIndices(): Set<number> {
     const indices = new Set<number>();
     if (this.source) {
-      for (const line of this.breakpointLines) {
-        for (const i of this.source.indicesForLine(line)) {
-          indices.add(i);
+      const runStartSet = new Set(this.runStarts);
+      for (const [file, breakpoints] of this.sourceBreakpoints) {
+        for (const bp of breakpoints) {
+          const resolved = this.source.resolveBreakpoint(file, bp.line);
+          for (const i of resolved?.indices ?? []) {
+            if (runStartSet.has(i)) {
+              indices.add(i);
+            }
+          }
         }
+      }
+    }
+    for (const addr of this.instructionBreakpointAddrs) {
+      for (const i of this.validatedPosToIndices.get(addr) ?? []) {
+        indices.add(i);
       }
     }
     return indices;
@@ -161,13 +282,87 @@ export class SorobanDebugSession extends DebugSession {
     }
 
     const loc = this.source.locationForIndex(this.model.cursor);
-    const doc = this.source.getDocument();
-    const src = new Source(doc.name, undefined, this.docSourceReference());
     const rec = this.model.current;
-    const frameName = `${rec.instr.map((t) => String(t)).join(' ')}  [${this.model.cursor}/${this.model.length - 1}]`;
+    const frameName = `${renderInstr(rec.instr)}  [${this.model.cursor}/${this.model.length - 1}]`;
 
-    const frame = new StackFrame(FRAME_ID, frameName, src, loc?.line ?? 1, loc?.column ?? 1);
+    // Unmapped records get no Source at all (and line 0): the client keeps
+    // showing the frame name instead of opening a wrong file.
+    const frame: DebugProtocol.StackFrame = loc
+      ? new StackFrame(FRAME_ID, frameName, new Source(path.basename(loc.path), loc.path), loc.line, loc.column ?? 0)
+      : new StackFrame(FRAME_ID, frameName);
+    const reference = this.instructionPointerReference();
+    if (reference !== undefined) {
+      frame.instructionPointerReference = reference;
+    }
     response.body = { stackFrames: [frame], totalFrames: 1 };
+    this.sendResponse(response);
+  }
+
+  /**
+   * The validated code offset of the current record as a hex address — or,
+   * for records without one, of the NEAREST earlier record that has one, so
+   * the Disassembly View stays anchored on the last real instruction. When no
+   * earlier record qualifies either (e.g. the trace opens with unvalidated
+   * global-initializer records) there is no address to report.
+   */
+  private instructionPointerReference(): string | undefined {
+    if (!this.model) {
+      return undefined;
+    }
+    for (let i = this.model.cursor; i >= 0; i--) {
+      const pos = this.positions[i];
+      if (pos !== null && pos !== undefined) {
+        return formatAddress(pos);
+      }
+    }
+    return undefined;
+  }
+
+  protected disassembleRequest(
+    response: DebugProtocol.DisassembleResponse,
+    args: DebugProtocol.DisassembleArguments,
+  ): void {
+    const instructions = this.disassembly?.instructions ?? [];
+    const base = parseAddress(args.memoryReference) + (args.offset ?? 0);
+    const anchor = Math.max(0, this.disassembly?.indexForAddress(base) ?? 0);
+    const start = anchor + (args.instructionOffset ?? 0);
+
+    const rows: DebugProtocol.DisassembledInstruction[] = [];
+    let previousPath: string | undefined;
+    for (let i = start; i < start + args.instructionCount; i++) {
+      if (i < 0 || i >= instructions.length) {
+        rows.push({
+          address: formatAddress(paddingAddress(i, i - start, instructions)),
+          instruction: '(invalid)',
+          presentationHint: 'invalid',
+        });
+        continue;
+      }
+      const instr = instructions[i];
+      const row: DebugProtocol.DisassembledInstruction = {
+        address: formatAddress(instr.address),
+        instruction: instr.text,
+      };
+      if (instr.bytes !== undefined) {
+        row.instructionBytes = [...instr.bytes].map((b) => b.toString(16).padStart(2, '0')).join(' ');
+      }
+      const loc = this.source?.locationForAddress(instr.address);
+      if (loc) {
+        row.line = loc.line;
+        if (loc.column !== undefined) {
+          row.column = loc.column;
+        }
+        // DAP lets `location` be omitted while the file is unchanged from the
+        // previous row's; clients inherit it downward.
+        if (loc.path !== previousPath) {
+          row.location = new Source(path.basename(loc.path), loc.path);
+          previousPath = loc.path;
+        }
+      }
+      rows.push(row);
+    }
+
+    response.body = { instructions: rows };
     this.sendResponse(response);
   }
 
@@ -214,15 +409,6 @@ export class SorobanDebugSession extends DebugSession {
     this.sendResponse(response);
   }
 
-  protected sourceRequest(
-    response: DebugProtocol.SourceResponse,
-    _args: DebugProtocol.SourceArguments,
-  ): void {
-    const doc = this.source?.getDocument();
-    response.body = { content: doc?.content ?? '', mimeType: 'text/plain' };
-    this.sendResponse(response);
-  }
-
   // --- Forward stepping -------------------------------------------------
 
   protected continueRequest(
@@ -235,36 +421,41 @@ export class SorobanDebugSession extends DebugSession {
 
   protected nextRequest(
     response: DebugProtocol.NextResponse,
-    _args: DebugProtocol.NextArguments,
+    args: DebugProtocol.NextArguments,
   ): void {
     this.sendResponse(response);
-    this.stopAfter(() => this.model?.stepOverForward() ?? false);
+    // S5/S10: step over — the next stop point not in a deeper frame.
+    this.stopAfter(() => this.moveCursor(this.stopPoints(args.granularity), 1, this.currentDepth()));
   }
 
   protected stepInRequest(
     response: DebugProtocol.StepInResponse,
-    _args: DebugProtocol.StepInArguments,
+    args: DebugProtocol.StepInArguments,
   ): void {
     this.sendResponse(response);
-    this.stopAfter(() => this.model?.stepForward() ?? false);
+    // S4/S10: step in — the next stop point regardless of depth.
+    this.stopAfter(() => this.moveCursor(this.stopPoints(args.granularity), 1, Infinity));
   }
 
   protected stepOutRequest(
     response: DebugProtocol.StepOutResponse,
-    _args: DebugProtocol.StepOutArguments,
+    args: DebugProtocol.StepOutArguments,
   ): void {
     this.sendResponse(response);
-    this.stopAfter(() => this.model?.stepOutForward() ?? false);
+    // S7: step out — the next stop point in a shallower frame; at the
+    // outermost recorded depth this exhausts and clamps like S2.
+    this.stopAfter(() => this.moveCursor(this.stopPoints(args.granularity), 1, this.currentDepth() - 1));
   }
 
   // --- Reverse stepping (time travel) ----------------------------------
 
   protected stepBackRequest(
     response: DebugProtocol.StepBackResponse,
-    _args: DebugProtocol.StepBackArguments,
+    args: DebugProtocol.StepBackArguments,
   ): void {
     this.sendResponse(response);
-    this.stopAfter(() => this.model?.stepOverBack() ?? false);
+    // S8/S10: reverse step over — the previous stop point not in a deeper frame.
+    this.stopAfter(() => this.moveCursor(this.stopPoints(args.granularity), -1, this.currentDepth()));
   }
 
   protected reverseContinueRequest(
@@ -308,8 +499,9 @@ export class SorobanDebugSession extends DebugSession {
       this.model.seek(target);
       this.sendEvent(new StoppedEvent('breakpoint', THREAD_ID));
     } else {
-      this.model.seek(this.model.length - 1);
-      // No further breakpoint: settle at the end of the recorded trace.
+      // S14: no further breakpoint — settle on the LAST stop point, never on
+      // the trace's trailing invisible/unmapped records.
+      this.model.seek(this.lastStopPoint());
       this.sendEvent(new StoppedEvent('step', THREAD_ID));
     }
   }
@@ -323,15 +515,78 @@ export class SorobanDebugSession extends DebugSession {
       this.model.seek(target);
       this.sendEvent(new StoppedEvent('breakpoint', THREAD_ID));
     } else {
-      this.model.seek(0);
+      // S14: no breakpoint behind — settle on the FIRST stop point.
+      this.model.seek(this.firstStopPoint());
       this.sendEvent(new StoppedEvent('step', THREAD_ID));
     }
   }
 
   /** Apply a cursor move and emit a Stopped(step) event. */
-  private stopAfter(move: () => boolean): void {
+  private stopAfter(move: () => void): void {
     move();
     this.sendEvent(new StoppedEvent('step', THREAD_ID));
+  }
+
+  /**
+   * The stop points of the active granularity (docs/stepping.md): the line-run
+   * starts for statement stepping, the visible records for instruction
+   * stepping — also the fallback when no record maps to a source line.
+   */
+  private stopPoints(granularity: DebugProtocol.SteppingGranularity | undefined): readonly number[] {
+    if (granularity !== 'instruction' && this.runStarts.length > 0) {
+      return this.runStarts;
+    }
+    return this.visibleIndices;
+  }
+
+  /** Call depth of the record at the cursor. */
+  private currentDepth(): number {
+    return (this.model && this.depths[this.model.cursor]) ?? 0;
+  }
+
+  /**
+   * Move the cursor to the nearest stop point in `direction` whose depth is
+   * <= `maxDepth`. With none ahead/behind, clamp to the last/first stop point
+   * (S2/S3/S7) — staying put when already there. An empty stop-point list
+   * (trace with no visible record at all) leaves the cursor where it is.
+   */
+  private moveCursor(points: readonly number[], direction: 1 | -1, maxDepth: number): void {
+    if (!this.model || points.length === 0) {
+      return;
+    }
+    const cursor = this.model.cursor;
+    if (direction > 0) {
+      for (const i of points) {
+        if (i > cursor && this.depths[i] <= maxDepth) {
+          this.model.seek(i);
+          return;
+        }
+      }
+      this.model.seek(points[points.length - 1]);
+    } else {
+      for (let k = points.length - 1; k >= 0; k--) {
+        const i = points[k];
+        if (i < cursor && this.depths[i] <= maxDepth) {
+          this.model.seek(i);
+          return;
+        }
+      }
+      this.model.seek(points[0]);
+    }
+  }
+
+  /** The trace's first stop point: run start, else visible record, else 0. */
+  private firstStopPoint(): number {
+    return this.runStarts[0] ?? this.visibleIndices[0] ?? 0;
+  }
+
+  /** The trace's last stop point (counterpart of firstStopPoint). */
+  private lastStopPoint(): number {
+    return (
+      this.runStarts[this.runStarts.length - 1] ??
+      this.visibleIndices[this.visibleIndices.length - 1] ??
+      Math.max(0, (this.model?.length ?? 1) - 1)
+    );
   }
 
   private makeVariable(name: string, tv: TypedValue): DebugProtocol.Variable {
@@ -344,15 +599,48 @@ export class SorobanDebugSession extends DebugSession {
     };
   }
 
-  private docSourceReference(): number {
-    // A single virtual document per session; a fixed non-zero reference tells
-    // the client to fetch its content via a sourceRequest.
-    return 1;
-  }
-
   private log(message: string): void {
     this.sendEvent(new OutputEvent(`${message}\n`, 'console'));
   }
+}
+
+/** Hex form of a code offset; negatives (padding only) render as '-0x…'. */
+function formatAddress(n: number): string {
+  return n < 0 ? '-0x' + (-n).toString(16) : '0x' + n.toString(16);
+}
+
+/**
+ * Numeric value of a client-supplied memory reference. Our own references are
+ * always '0x…', which parseInt(ref, 16) accepts; anything unparseable or
+ * negative clamps to 0.
+ */
+function parseAddress(reference: string): number {
+  const n = parseInt(reference, 16);
+  return Number.isNaN(n) || n < 0 ? 0 : n;
+}
+
+/**
+ * Synthetic address for the padding row at out-of-range instruction index
+ * `index`: counts down from the first instruction's address below the range
+ * and up from the last one's above it, keeping every address in the response
+ * unique and strictly increasing (VS Code keys rows by address). Below the
+ * first instruction this can go negative — code offsets start near 0, so a
+ * window scrolled above the top underflows; those rows are inert padding and
+ * never real instructions. With no instructions at all, addresses are simply
+ * the row index (0, 1, 2, …).
+ */
+function paddingAddress(
+  index: number,
+  rowIndex: number,
+  instructions: readonly { address: number }[],
+): number {
+  if (instructions.length === 0) {
+    return rowIndex;
+  }
+  if (index < 0) {
+    return instructions[0].address + index;
+  }
+  return instructions[instructions.length - 1].address + (index - (instructions.length - 1));
 }
 
 function formatValue(value: unknown): string {

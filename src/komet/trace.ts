@@ -3,14 +3,22 @@
  *
  * komet-node executes a whole transaction and, via the `traceTransaction` RPC,
  * emits a trace as JSON Lines — one record per executed WebAssembly
- * instruction. A record looks like:
+ * instruction. A record looks like (from test/fixtures/adder-debug.trace.jsonl):
  *
- *   {"pos": 597, "instr": ["local.get", 0], "stack": [["i64", 4]], "locals": {"0": ["i64", 4]}}
+ *   {"pos": 45, "instr": ["add", "i32"], "stack": [["i32", 4], ["i32", 3]], "locals": {"2": ["i32", 3]}}
  *
  * Fields:
- *   - pos:    byte offset of the instruction in the wasm binary, or null for
+ *   - pos:    byte offset of the instruction relative to the payload of the
+ *             SECTION IT EXECUTES IN — the code section's payload for function
+ *             code, but e.g. the globals section's payload for records that
+ *             evaluate global initializers. The two ranges overlap, so a `pos`
+ *             is only a code offset after downstream validation against the
+ *             static disassembly (debugAdapter/artifacts.ts). Null for
  *             synthetic instructions.
- *   - instr:  [name, ...operands].
+ *   - instr:  [op, ...operands] in komet's K-style spelling: a type qualifier
+ *             follows the op (["const","i64",255] is `i64.const 255`), and
+ *             ["unknown"] stands for opcodes its printer cannot decode (e.g.
+ *             `if`) — see komet/mnemonics.ts for normalization.
  *   - stack:  value stack at instruction entry, as [type, value] pairs.
  *   - locals: local variable bindings keyed by index, as [type, value] pairs.
  *
@@ -27,7 +35,10 @@ export type TypedValue = [string, unknown];
 
 /** A single WebAssembly-instruction trace record. */
 export interface TraceRecord {
-  /** Byte offset of the instruction in the wasm binary, or null if synthetic. */
+  /**
+   * Byte offset of the instruction relative to its section's payload (code
+   * offset for function code), or null if synthetic. See the module header.
+   */
   pos: number | null;
   /** Instruction name followed by its immediate operands. */
   instr: [string, ...unknown[]];

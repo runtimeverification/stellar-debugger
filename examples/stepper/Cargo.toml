@@ -1,0 +1,24 @@
+[package]
+name = "stepper"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+soroban-sdk = "22.0.0"
+
+[profile.release]
+opt-level = "z"
+# The contract uses wrapping arithmetic so the hot path carries no
+# overflow-check branches; the checks that remain compile to `br_if`,
+# which komet-node's tracer can decode (unlike `if`).
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true

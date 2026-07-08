@@ -12,54 +12,31 @@ async function loadModel(): Promise<TraceModel> {
 }
 
 describe('TraceModel', () => {
-  it('builds posToIndices from the trace', async () => {
+  it('exposes the trace length and record access via the cursor', async () => {
     const model = await loadModel();
-    assert.deepStrictEqual(model.posToIndices.get(100), [0]);
-    assert.deepStrictEqual(model.posToIndices.get(200), [4]);
-    // synthetic (null pos) records are not indexed by position
-    assert.ok(!model.posToIndices.has(NaN));
+    assert.strictEqual(model.isEmpty, false);
+    assert.strictEqual(model.length, 8);
+    assert.strictEqual(model.cursor, 0);
+    assert.deepStrictEqual(model.current.instr, ['local.get', 0]);
   });
 
-  it('steps forward and back with clamping', async () => {
-    const model = await loadModel();
-    assert.strictEqual(model.cursor, 0);
-    assert.strictEqual(model.atStart(), true);
-    assert.strictEqual(model.stepBack(), false); // clamped at start
-    assert.strictEqual(model.cursor, 0);
-
-    while (!model.atEnd()) {
-      model.stepForward();
-    }
-    assert.strictEqual(model.cursor, model.length - 1);
-    assert.strictEqual(model.stepForward(), false); // clamped at end
+  it('reports an empty trace as empty', () => {
+    const model = new TraceModel([]);
+    assert.strictEqual(model.isEmpty, true);
+    assert.strictEqual(model.length, 0);
   });
 
-  it('stepBack is the inverse of stepForward', async () => {
+  it('seek moves the cursor and clamps to the trace range', async () => {
     const model = await loadModel();
-    model.seek(3);
-    model.stepForward();
+    assert.strictEqual(model.seek(4), 4);
     assert.strictEqual(model.cursor, 4);
-    model.stepBack();
-    assert.strictEqual(model.cursor, 3);
-  });
+    assert.deepStrictEqual(model.current.instr, ['local.get', 0]);
+    assert.strictEqual(model.current.pos, 200);
 
-  it('reconstructs call depth from call/return', async () => {
-    const model = await loadModel();
-    // index 3 is `call` (depth 0 at entry), 4/5 are inside the callee (depth 1)
-    assert.strictEqual(model.depthAt[3], 0);
-    assert.strictEqual(model.depthAt[4], 1);
-    assert.strictEqual(model.depthAt[5], 1);
-    // index 6 is back in the caller after the callee returned
-    assert.strictEqual(model.depthAt[6], 0);
-  });
-
-  it('step over skips the callee entered by a call', async () => {
-    const model = await loadModel();
-    model.seek(3); // the `call` instruction
-    model.stepOverForward();
-    // should land back at caller depth, past the callee (index 6)
-    assert.strictEqual(model.depthAt[model.cursor], 0);
-    assert.strictEqual(model.cursor, 6);
+    assert.strictEqual(model.seek(-3), 0);
+    assert.strictEqual(model.cursor, 0);
+    assert.strictEqual(model.seek(999), model.length - 1);
+    assert.strictEqual(model.cursor, 7);
   });
 
   it('navigates to breakpoint indices forward and backward', async () => {

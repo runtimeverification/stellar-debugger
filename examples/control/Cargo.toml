@@ -1,0 +1,25 @@
+[package]
+name = "control"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+soroban-sdk = "22.0.0"
+
+# Mirrors the other examples' production profile. The debugger builds this with
+# CARGO_PROFILE_RELEASE_OPT_LEVEL=0 injected (see ContractBuilder), which is what
+# keeps per-statement DWARF line info alive for source stepping; opt-level = "z"
+# (and even "1") collapses whole functions' statements onto a single line.
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true

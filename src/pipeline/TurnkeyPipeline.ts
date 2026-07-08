@@ -21,7 +21,7 @@ import { encodeArgs } from '../soroban/scval';
 import { parseTraceJsonl } from '../komet/trace';
 import { promises as fs } from 'fs';
 import { TraceModel } from '../debugAdapter/TraceModel';
-import { TraceListingSource } from '../sourcemap/SourceMapper';
+import { buildDebugArtifacts } from '../debugAdapter/artifacts';
 import { ProgressReporter, ResolvedTrace, SorobanLaunchArgs } from '../debugAdapter/types';
 
 const HEALTH_TIMEOUT_MS = 60_000;
@@ -94,12 +94,13 @@ export class TurnkeyPipeline {
 
     const trace = await client.traceTransaction(sent.hash);
 
-    // 7. Parse trace into the replay model.
+    // 7. Parse trace into the replay model; the uploaded wasm supplies the
+    // disassembly and (when built with debug info) the DWARF source mapping.
     const records = parseTraceJsonl(trace);
     const model = new TraceModel(records);
-    const source2 = new TraceListingSource(model);
+    const { source: sourceMapper, disassembly, positions } = buildDebugArtifacts(wasm, model, report);
 
-    return { model, source: source2 };
+    return { model, source: sourceMapper, disassembly, positions };
   }
 
   async dispose(): Promise<void> {
@@ -116,6 +117,7 @@ export class TurnkeyPipeline {
         contractDir: args.contract ?? process.cwd(),
         buildCommand: args.buildCommand,
         wasmPath: args.wasmPath,
+        debugInfo: args.debugInfo,
       },
       report,
     );

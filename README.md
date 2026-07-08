@@ -7,7 +7,9 @@ Verification's local Stellar testnet built on K formal semantics.
 komet-node executes a whole transaction and returns the *entire* execution trace
 as JSON Lines (one record per WebAssembly instruction) via its `traceTransaction`
 RPC. This extension loads that trace and lets you **step forward and backward**
-through the execution inside VSCode's debugger UI.
+through the execution inside VSCode's debugger UI — at the **Rust source level**
+when DWARF debug info is available, and at the instruction level in VSCode's
+built-in **Disassembly View** always.
 
 ## Status
 
@@ -32,20 +34,58 @@ through the execution inside VSCode's debugger UI.
   JSON-RPC; `TurnkeyPipeline` orchestrates build → spawn → seed → deploy →
   invoke-with-trace → replay. `attach` mode connects to a running node.
 
-See [the roadmap](#roadmap) for what's next.
+**Milestones M4+M5 (done): DWARF → Rust source mapping + DAP disassembly.**
+
+- The build injects `CARGO_PROFILE_RELEASE_DEBUG=true` /
+  `CARGO_PROFILE_RELEASE_STRIP=none` into `stellar contract build`, so the wasm
+  carries DWARF — no `Cargo.toml` changes needed (set `"debugInfo": false` in
+  the launch config to opt out). The **pristine linker output**
+  (`target/…/release/deps/*.wasm`) is used and uploaded, because the Stellar
+  CLI's metadata-injection step rewrites the wasm and strips the DWARF line
+  programs.
+- An in-repo DWARF v4/v5 line-table parser (`src/dwarf/`) maps wasm code
+  offsets to Rust `file:line`. Stack frames open the real `.rs` file;
+  **breakpoints set in Rust source** verify against the executed trace (sliding
+  forward to the nearest executed line); stepping is **statement-granular** in
+  source and **instruction-granular** in the Disassembly View
+  (`supportsSteppingGranularity`).
+- The raw WebAssembly view is VSCode's built-in **Disassembly View**
+  (right-click a stack frame → *Open Disassembly View*): a static
+  `wasmparser`-backed disassembly with Rust line annotations, plus
+  **instruction breakpoints** (`supportsDisassembleRequest`,
+  `supportsInstructionBreakpoints`, `supportsBreakpointLocationsRequest`).
+- **No-DWARF fallback:** a prebuilt wasm without debug info, or a `rawTrace`
+  replay without `wasmPath`, degrades to disassembly-only debugging — frames
+  carry an instruction pointer but no source.
+
+Trace positions are **validated** before use: komet-node's `pos` is relative to
+the section being executed (code section for function code, e.g. the globals
+section for global initializers), so every record is cross-checked against the
+static disassembly and only trusted when the mnemonics agree. Note that
+komet-node's tracer stops at instructions it cannot decode (it prints them as
+`unknown`, e.g. `if`), so a trace can be a prefix of the full execution.
 
 ## Verification
 
-The replay logic and pipeline are exercised by 38 tests (`npm test`):
+The replay logic and pipeline are exercised by 180+ tests (`npm test`):
 
-- **DAP protocol tests** drive the real adapter (capability, entry stop, forward
-  and reverse stepping, locals/stack, run-to-breakpoint + reverse-continue).
+- **DAP protocol tests** drive the real adapter (capabilities, entry stop,
+  forward and reverse stepping at both granularities, locals/stack, Rust source
+  breakpoints with forward slide, run-to-breakpoint + reverse-continue,
+  disassembly windows, instruction breakpoints, breakpoint locations).
+- **DWARF tests** decode the committed debug build of `examples/adder`
+  (`test/fixtures/adder-debug.wasm`) and pin the `a + b` line mapping against
+  its **matched real trace** (`adder-debug.trace.jsonl`); regenerate the pair
+  together with `scripts/make-fixtures.sh`.
 - **tx-builder tests** decode every built envelope back with the SDK; envelopes
   are additionally cross-checked against the Stellar CLI's own XDR decoder.
 - **pipeline tests** run `TurnkeyPipeline` against an in-process mock komet-node
   and assert the full deploy+invoke sequence and the parsed trace.
 - **build integration test** (auto-skips without the toolchain) runs a real
   `stellar contract build` through `ContractBuilder`.
+- `scripts/verify-addresses.mjs` re-derives the address-space ground truth
+  (komet `pos` convention, DWARF address space) against a live komet-node — the
+  regression tool for the M0 findings above.
 
 ## Devcontainer toolchain
 
@@ -63,16 +103,25 @@ in-process in the extension host (`DebugAdapterInlineImplementation`).
 ```
 extension.ts            VSCode glue: config provider + inline adapter factory
 debugAdapter/
-  SorobanDebugSession   DAP handlers (cursor moves + StoppedEvents)
-  TraceModel            records, cursor, call-depth, breakpoint navigation
+  SorobanDebugSession   DAP handlers (cursor moves + StoppedEvents, disassembly)
+  TraceModel            records, cursor, call-depth, line + instruction stepping
+  artifacts.ts          wasm bytes -> { mapper, disassembly, validated positions }
   backends/
-    RawTraceBackend     M1: replay a JSONL trace file
-    LiveBackend         M2: turnkey build + spawn + deploy + trace
+    RawTraceBackend     replay a JSONL trace file (+ optional wasmPath for symbols)
+    LiveBackend         turnkey build + spawn + deploy + trace
 komet/
-  trace.ts              JSONL -> TraceRecord[]
+  trace.ts              JSONL -> TraceRecord[] (K-style mnemonics, section-relative pos)
+  mnemonics.ts          K-style instr arrays -> wasm mnemonics ('i64.const 255')
   KometClient.ts        JSON-RPC client (getHealth/sendTransaction/traceTransaction/...)
 soroban/scval.ts        launch args -> ScVals (@stellar/stellar-sdk)
-sourcemap/SourceMapper  pos <-> displayed line; v1 renders the trace listing
+wasm/
+  sections.ts           wasm section walker (offsets, custom-section lookup)
+  Disassembly.ts        static disassembly (wasmparser), code-offset addressed
+dwarf/                  DWARF v4/v5 .debug_line/.debug_info parser -> LineTable
+sourcemap/
+  SourceMapper          the mapping seam the adapter talks to
+  DwarfSourceMapper     trace index / code offset -> Rust file:line (+ breakpoints)
+  NullSourceMapper      no-DWARF fallback (disassembly-only)
 ```
 
 All replay logic is free of the `vscode` API so it can be unit-tested in plain
@@ -83,28 +132,27 @@ Node. The `vscode`-only glue lives in `extension.ts`.
 ```bash
 npm install
 npm run build        # bundle to dist/extension.js (esbuild)
-npm test             # tsc + mocha (27 tests, incl. DAP protocol tests)
+npm test             # tsc + mocha
 npm run check-types  # tsc --noEmit
 npm run lint
 ```
 
 Press **F5** (Run Extension) to open an Extension Development Host with the
 extension loaded. It opens the [`examples/`](examples/) workspace — a
-self-contained Soroban project with two contracts (`adder`, `increment`) and a
-captured trace — so there is something real to debug immediately.
+self-contained Soroban project with three contracts and captured traces — so
+there is something real to debug immediately.
 
 Pick a config from the Run and Debug view. Start with **Soroban: Replay
-add(4, 3) trace**, which replays the bundled trace so you can step
-forward/backward, set breakpoints on instructions, and inspect the stack/locals
-— end to end, with no komet-node required. The **Debug add(1, 2)** and **Debug
-increment(5)** configs exercise the full build → deploy → trace pipeline.
+add(4, 3) with symbols**, which replays the bundled trace *with* the matching
+debug wasm: frames land in `adder/src/lib.rs`, breakpoints work on Rust lines,
+and the Disassembly View shows annotated wasm — no komet-node required. The
+**Debug add(1, 2)** and **Debug increment(5)** configs exercise the full
+build → deploy → trace pipeline.
 
 See [`examples/README.md`](examples/README.md) for details.
 
 ## Roadmap
 
-- **M3 — Richer time travel:** call-stack reconstruction from call/return depth.
-- **M4 — WAT source view:** disassemble the wasm code section and map `pos` to
-  WAT lines for breakpoints on real instructions.
-- **M5 — DWARF -> Rust source:** map `pos` to Rust `file:line` using embedded
-  DWARF, for source-level stepping.
+- **M3 — Richer time travel:** call-stack reconstruction from call/return depth
+  (multi-frame stack traces, frame-scoped locals).
+- Column-level breakpoints and inline `values` from DWARF variable info.

@@ -32,34 +32,14 @@
         }
       }
     },
-    "languages": [
-      {
-        "id": "soroban-wat",
-        "aliases": [
-          "Soroban WAT",
-          "soroban-wat"
-        ],
-        "extensions": [
-          ".komet"
-        ]
-      }
-    ],
     "commands": [
       {
         "command": "soroban.debug",
         "title": "Soroban: Debug Contract Function",
         "category": "Soroban"
-      },
-      {
-        "command": "soroban.showWat",
-        "title": "Soroban: Show Disassembly (WAT)",
-        "category": "Soroban"
       }
     ],
     "breakpoints": [
-      {
-        "language": "soroban-wat"
-      },
       {
         "language": "rust"
       }
@@ -167,6 +147,11 @@
               "rawTrace": {
                 "type": "string",
                 "description": "Attach mode: path to a precomputed JSONL trace file to replay (skips all RPC)."
+              },
+              "debugInfo": {
+                "type": "boolean",
+                "default": true,
+                "description": "Build the contract with DWARF debug info so the debugger can map execution to Rust source files and lines. Set false to build untouched and debug at the wasm level only."
               }
             }
           }
@@ -219,7 +204,8 @@
   "dependencies": {
     "@stellar/stellar-sdk": "^13.3.0",
     "@vscode/debugadapter": "^1.68.0",
-    "@vscode/debugprotocol": "^1.68.0"
+    "@vscode/debugprotocol": "^1.68.0",
+    "wasmparser": "^5.11.1"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.7",
