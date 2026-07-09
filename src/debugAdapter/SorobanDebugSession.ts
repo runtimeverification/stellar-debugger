@@ -23,7 +23,13 @@ import {
 import { DebugProtocol } from '@vscode/debugprotocol';
 import * as path from 'path';
 import { TraceModel } from './TraceModel';
-import { classifyLineRole, computeDepths, computeRunStarts, statementStops } from './stops';
+import {
+  classifyLineRole,
+  computeDepths,
+  computeRunStarts,
+  firstNonWhitespaceColumn,
+  statementStops,
+} from './stops';
 import { SourceMapper } from '../sourcemap/SourceMapper';
 import { Disassembly } from '../wasm/Disassembly';
 import { ResolvedTrace, SessionBackend, SorobanLaunchArgs } from './types';
@@ -304,9 +310,18 @@ export class SorobanDebugSession extends DebugSession {
     const frameName = `${renderInstr(rec.instr)}  [${this.model.cursor}/${this.model.length - 1}]`;
 
     // Unmapped records get no Source at all (and line 0): the client keeps
-    // showing the frame name instead of opening a wrong file.
+    // showing the frame name instead of opening a wrong file. S19: a mapped
+    // frame reports the line's first non-whitespace column, not the arbitrary
+    // DWARF sub-expression column; fall back to the DWARF column when the line
+    // text is unavailable or all-whitespace.
     const frame: DebugProtocol.StackFrame = loc
-      ? new StackFrame(FRAME_ID, frameName, new Source(path.basename(loc.path), loc.path), loc.line, loc.column ?? 0)
+      ? new StackFrame(
+          FRAME_ID,
+          frameName,
+          new Source(path.basename(loc.path), loc.path),
+          loc.line,
+          firstNonWhitespaceColumn(this.source.sourceTextForIndex(this.model.cursor)) ?? loc.column ?? 0,
+        )
       : new StackFrame(FRAME_ID, frameName);
     const reference = this.instructionPointerReference();
     if (reference !== undefined) {
@@ -443,7 +458,7 @@ export class SorobanDebugSession extends DebugSession {
   ): void {
     this.sendResponse(response);
     // S5/S10: step over — the next stop point not in a deeper frame.
-    this.stopAfter(() => this.moveCursor(this.stopPoints(args.granularity), 1, this.currentDepth()));
+    this.stepForward(args.granularity, this.currentDepth());
   }
 
   protected stepInRequest(
@@ -452,7 +467,7 @@ export class SorobanDebugSession extends DebugSession {
   ): void {
     this.sendResponse(response);
     // S4/S10: step in — the next stop point regardless of depth.
-    this.stopAfter(() => this.moveCursor(this.stopPoints(args.granularity), 1, Infinity));
+    this.stepForward(args.granularity, Infinity);
   }
 
   protected stepOutRequest(
@@ -461,8 +476,9 @@ export class SorobanDebugSession extends DebugSession {
   ): void {
     this.sendResponse(response);
     // S7: step out — the next stop point in a shallower frame; at the
-    // outermost recorded depth this exhausts and clamps like S2.
-    this.stopAfter(() => this.moveCursor(this.stopPoints(args.granularity), 1, this.currentDepth() - 1));
+    // outermost recorded depth this exhausts and terminates (S20) at statement
+    // granularity, or clamps like S2 at instruction granularity.
+    this.stepForward(args.granularity, this.currentDepth() - 1);
   }
 
   // --- Reverse stepping (time travel) ----------------------------------
@@ -472,8 +488,10 @@ export class SorobanDebugSession extends DebugSession {
     args: DebugProtocol.StepBackArguments,
   ): void {
     this.sendResponse(response);
-    // S8/S10: reverse step over — the previous stop point not in a deeper frame.
-    this.stopAfter(() => this.moveCursor(this.stopPoints(args.granularity), -1, this.currentDepth()));
+    // S8/S10: reverse step over — the previous stop point not in a deeper
+    // frame. Reverse steps always CLAMP to the first stop (S3/S8) and never
+    // terminate; S20 is forward-only.
+    this.stopAfter(() => this.moveCursorBackward(this.stopPoints(args.granularity), this.currentDepth()));
   }
 
   protected reverseContinueRequest(
@@ -563,34 +581,65 @@ export class SorobanDebugSession extends DebugSession {
   }
 
   /**
-   * Move the cursor to the nearest stop point in `direction` whose depth is
-   * <= `maxDepth`. With none ahead/behind, clamp to the last/first stop point
-   * (S2/S3/S7) — staying put when already there. An empty stop-point list
-   * (trace with no visible record at all) leaves the cursor where it is.
+   * Forward step (S2/S5/S7/S20): seek to the first stop point after the cursor
+   * whose depth is <= `maxDepth`, then report a stop. With no such stop ahead,
+   * a STATEMENT step (granularity !== 'instruction' over the source run-start
+   * stop set) TERMINATES the session (S20) — the replayed contract has returned
+   * from its outermost recorded frame — while an INSTRUCTION step, or a
+   * wasm-less replay with no run starts, clamps to the last stop point and
+   * reports a stop (S2). Emits its own event, so it is called directly (not via
+   * stopAfter): a termination must NOT be followed by a StoppedEvent.
    */
-  private moveCursor(points: readonly number[], direction: 1 | -1, maxDepth: number): void {
+  private stepForward(
+    granularity: DebugProtocol.SteppingGranularity | undefined,
+    maxDepth: number,
+  ): void {
+    if (!this.model) {
+      return;
+    }
+    const points = this.stopPoints(granularity);
+    const cursor = this.model.cursor;
+    for (const i of points) {
+      if (i > cursor && this.depths[i] <= maxDepth) {
+        this.model.seek(i);
+        this.sendEvent(new StoppedEvent('step', THREAD_ID));
+        return;
+      }
+    }
+    // Nothing qualifying ahead.
+    if (granularity !== 'instruction' && this.runStarts.length > 0) {
+      // S20: a forward source step past the last statement ends the session.
+      this.sendEvent(new TerminatedEvent());
+      return;
+    }
+    // S2: instruction granularity / wasm-less replay clamps to the last stop
+    // point (staying put when already there) and still reports a stop.
+    if (points.length > 0) {
+      this.model.seek(points[points.length - 1]);
+    }
+    this.sendEvent(new StoppedEvent('step', THREAD_ID));
+  }
+
+  /**
+   * Reverse step (S3/S8): move the cursor to the nearest earlier stop point
+   * whose depth is <= `maxDepth`. With none behind, clamp to the first stop
+   * point (staying put when already there). An empty stop-point list (trace
+   * with no visible record at all) leaves the cursor where it is. Reverse steps
+   * always clamp and never terminate.
+   */
+  private moveCursorBackward(points: readonly number[], maxDepth: number): void {
     if (!this.model || points.length === 0) {
       return;
     }
     const cursor = this.model.cursor;
-    if (direction > 0) {
-      for (const i of points) {
-        if (i > cursor && this.depths[i] <= maxDepth) {
-          this.model.seek(i);
-          return;
-        }
+    for (let k = points.length - 1; k >= 0; k--) {
+      const i = points[k];
+      if (i < cursor && this.depths[i] <= maxDepth) {
+        this.model.seek(i);
+        return;
       }
-      this.model.seek(points[points.length - 1]);
-    } else {
-      for (let k = points.length - 1; k >= 0; k--) {
-        const i = points[k];
-        if (i < cursor && this.depths[i] <= maxDepth) {
-          this.model.seek(i);
-          return;
-        }
-      }
-      this.model.seek(points[0]);
     }
+    this.model.seek(points[0]);
   }
 
   /** The trace's first stop point: run start, else visible record, else 0. */

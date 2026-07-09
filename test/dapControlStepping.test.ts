@@ -39,6 +39,8 @@ const STMT = { ...THREAD, granularity: 'statement' as const };
 interface Stop {
   index: number;
   line: number;
+  /** 1-based source column reported on the frame (S19: first non-whitespace). */
+  col?: number;
   path?: string;
 }
 
@@ -60,7 +62,7 @@ describe('Control-flow stepping (docs/stepping.md, DAP level)', () => {
     const frame = res.body.stackFrames[0];
     const probe = /\[(\d+)\/\d+\]$/.exec(frame.name);
     assert.ok(probe, `frame name carries no trace-index probe: ${frame.name}`);
-    return { index: Number(probe[1]), line: frame.line, path: frame.source?.path };
+    return { index: Number(probe[1]), line: frame.line, col: frame.column, path: frame.source?.path };
   }
 
   async function stopAfter(request: Promise<unknown>, reason = 'step'): Promise<Stop> {
@@ -69,10 +71,15 @@ describe('Control-flow stepping (docs/stepping.md, DAP level)', () => {
     return top();
   }
 
-  function expect(stop: Stop, expected: { index: number; line?: number; file?: string }): void {
+  function expect(stop: Stop, expected: { index: number; line?: number; col?: number; file?: string }): void {
     assert.strictEqual(stop.index, expected.index, `stopped at trace index ${stop.index}, expected ${expected.index}`);
     if (expected.line !== undefined) {
       assert.strictEqual(stop.line, expected.line, `stopped at line ${stop.line}, expected ${expected.line}`);
+    }
+    if (expected.col !== undefined) {
+      // S19: the frame column is the first non-whitespace column of the line,
+      // NOT the DWARF sub-expression column.
+      assert.strictEqual(stop.col, expected.col, `stopped at column ${stop.col}, expected ${expected.col} (S19)`);
     }
     if (expected.file !== undefined) {
       assert.ok(stop.path?.endsWith(expected.file), `unexpected source: ${stop.path}`);
@@ -100,16 +107,33 @@ describe('Control-flow stepping (docs/stepping.md, DAP level)', () => {
 
   /**
    * Walk statement `stepIn` (the next run start regardless of depth) from the
-   * entry stop until the cursor stops advancing, returning every distinct stop
-   * in trace order — the DAP-visible enumeration of the statement stop points.
+   * entry stop, collecting every distinct stop in trace order — the DAP-visible
+   * enumeration of the statement stop points. S20: the step AFTER the last stop
+   * point ends the session (TerminatedEvent) rather than clamping in place, so
+   * we race 'terminated' against 'stopped' on each press and stop collecting the
+   * moment the session terminates (never blocking on a 'stopped' that won't come).
    */
   async function walkStepIn(launchArgs: object): Promise<Stop[]> {
     const stops: Stop[] = [await launchAndStop(launchArgs)];
     for (;;) {
-      const next = await stopAfter(dc.stepInRequest(STMT));
-      if (next.index === stops[stops.length - 1].index) {
-        break; // S2: clamped on the last stop point.
+      const req = dc.stepInRequest(STMT);
+      const ended = await Promise.race([
+        dc.waitForEvent('terminated').then(() => true),
+        dc.waitForEvent('stopped').then(() => false),
+      ]);
+      await req;
+      if (ended) {
+        break; // S20: forward statement step past the last stop terminated.
       }
+      const next = await top();
+      // S20: past the last stop a statement step must TERMINATE, never clamp in
+      // place. A repeated index means the engine clamped (pre-S20 behavior) —
+      // fail fast and explicitly here rather than looping until the 30s timeout.
+      assert.notStrictEqual(
+        next.index,
+        stops[stops.length - 1].index,
+        `S20: statement stepIn clamped in place at index ${next.index} instead of terminating`,
+      );
       stops.push(next);
     }
     return stops;
@@ -122,7 +146,9 @@ describe('Control-flow stepping (docs/stepping.md, DAP level)', () => {
       // S17 drops the #[contractimpl] export shim (:20) and the `pub fn seq`
       // signature (:23), so the entry stop rests on the first real statement.
       const entry = await launchAndStop(control('seq'));
-      expect(entry, { index: 236, line: 24, file: CONTROL_LIB_SUFFIX });
+      // S19: :24's DWARF column was 19 (the `let a` initializer sub-expression);
+      // the frame now reports the first non-whitespace column (9).
+      expect(entry, { index: 236, line: 24, col: 9, file: CONTROL_LIB_SUFFIX });
     });
 
     it('S4/S5: statement stops are the three assignments and return brace — strictly increasing', async () => {
@@ -133,6 +159,8 @@ describe('Control-flow stepping (docs/stepping.md, DAP level)', () => {
         [262, 26],
         [265, 28],
       ]);
+      // S19: every stop rests on its line's first non-whitespace column.
+      assert.deepStrictEqual(stops.map((s) => s.col), [9, 9, 9, 5]);
       // The body lines strictly increase (24,25,26,28): a pure sequence stops
       // once per statement, never re-visiting a line.
       const bodyLines = stops.map((s) => s.line);
@@ -152,6 +180,8 @@ describe('Control-flow stepping (docs/stepping.md, DAP level)', () => {
         [246, 38],
         [248, 39],
       ]);
+      // S19: first non-whitespace column of each stop's line.
+      assert.deepStrictEqual(stops.map((s) => s.col), [9, 13, 9, 9, 5]);
       const lines = stops.map((s) => s.line);
       assert.ok(lines.includes(36), 'expected the taken else arm (:36) to be a stop');
       assert.ok(!lines.includes(34), 'the un-taken then arm (:34) must never be a stop');
@@ -173,6 +203,8 @@ describe('Control-flow stepping (docs/stepping.md, DAP level)', () => {
         [805, 47],
         [808, 48],
       ]);
+      // S19: first non-whitespace column of each stop's line.
+      assert.deepStrictEqual(stops.map((s) => s.col), [9, 9, 13, 9, 13, 9, 13, 9, 9, 5]);
       const body = stops.filter((s) => s.line === 44);
       assert.ok(body.length >= 3, `expected >=3 per-iteration stops on :44, got ${body.length}`);
       // Each body stop is a distinct trace index — a genuinely separate stop.
@@ -211,6 +243,12 @@ describe('Control-flow stepping (docs/stepping.md, DAP level)', () => {
         [456, 59],
         [459, 60],
       ]);
+      // S19: first non-whitespace column of each stop's line (the depth-3 bump
+      // body :16 is col 5, its epilogue brace :18 col 1).
+      assert.deepStrictEqual(
+        stops.map((s) => s.col),
+        [9, 9, 9, 13, 5, 1, 13, 9, 13, 5, 1, 13, 9, 13, 5, 1, 13, 9, 9, 5],
+      );
       // bump's first body line :16 is visited exactly once per loop iteration (3x).
       assert.strictEqual(stops.filter((s) => s.line === 16).length, 3);
       // The dropped `fn bump` signature :15 never surfaces as a stop (S17).
@@ -220,29 +258,30 @@ describe('Control-flow stepping (docs/stepping.md, DAP level)', () => {
     it('S4: stepIn at the call line :56 descends into bump body :16', async () => {
       await launchAndStop(control('while_call'));
       // Entry is the first body statement (:53); stepIn three times to reach the
-      // first call line (:56, index 243).
-      expect(await stmtStepIn(3), { index: 243, line: 56 });
+      // first call line (:56, index 243). S19: :56's DWARF column was 19; the
+      // first non-whitespace column is 13.
+      expect(await stmtStepIn(3), { index: 243, line: 56, col: 13 });
       const stop = await stopAfter(dc.stepInRequest(STMT));
-      expect(stop, { index: 266, line: 16, file: CONTROL_LIB_SUFFIX });
+      expect(stop, { index: 266, line: 16, col: 5, file: CONTROL_LIB_SUFFIX });
     });
 
     it('S5/I1: next at the call line :56 steps OVER bump to :57 in one press', async () => {
       await launchAndStop(control('while_call'));
-      expect(await stmtStepIn(3), { index: 243, line: 56 });
+      expect(await stmtStepIn(3), { index: 243, line: 56, col: 13 });
       // bump's records (:16/:18) are one frame deeper and its return is
       // implicit (no return record); one `next` must skip the whole call.
       const stop = await stopAfter(dc.nextRequest(STMT));
-      expect(stop, { index: 291, line: 57, file: CONTROL_LIB_SUFFIX });
+      expect(stop, { index: 291, line: 57, col: 13, file: CONTROL_LIB_SUFFIX });
     });
 
     it('S7/S8: stepOut from inside bump returns to the caller line :57 (implicit return)', async () => {
       await launchAndStop(control('while_call'));
-      expect(await stmtStepIn(3), { index: 243, line: 56 });
-      expect(await stopAfter(dc.stepInRequest(STMT)), { index: 266, line: 16 });
+      expect(await stmtStepIn(3), { index: 243, line: 56, col: 13 });
+      expect(await stopAfter(dc.stepInRequest(STMT)), { index: 266, line: 16, col: 5 });
       // Despite no `return` record, stepOut unwinds the deeper bump frame and
       // lands on the next shallower run start (:57).
       const stop = await stopAfter(dc.stepOutRequest(STMT));
-      expect(stop, { index: 291, line: 57 });
+      expect(stop, { index: 291, line: 57, col: 13 });
     });
   });
 
@@ -255,6 +294,9 @@ describe('Control-flow stepping (docs/stepping.md, DAP level)', () => {
         [243, 69],
         [245, 70],
       ]);
+      // S19: :64's DWARF column was 23 (the `match x % 3` sub-expression); the
+      // first non-whitespace column is 9. Every stop rests at its line start.
+      assert.deepStrictEqual(stops.map((s) => s.col), [9, 13, 9, 5]);
       const lines = stops.map((s) => s.line);
       assert.ok(lines.includes(66), 'expected the taken match arm (:66) to be a stop');
       assert.ok(!lines.includes(65), 'the un-taken arm 0=> (:65) must never be a stop');

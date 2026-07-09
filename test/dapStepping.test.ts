@@ -54,6 +54,8 @@ interface Stop {
   /** Trace index, parsed from the frame name's '[<cursor>/<last>]' probe. */
   index: number;
   line: number;
+  /** 1-based source column reported on the frame (S19: first non-whitespace). */
+  col?: number;
   path?: string;
   ipRef?: string;
 }
@@ -79,6 +81,7 @@ describe('Stepping spec (docs/stepping.md, DAP level)', () => {
     return {
       index: Number(probe[1]),
       line: frame.line,
+      col: frame.column,
       path: frame.source?.path,
       ipRef: frame.instructionPointerReference,
     };
@@ -91,13 +94,35 @@ describe('Stepping spec (docs/stepping.md, DAP level)', () => {
     return top();
   }
 
+  /**
+   * S20: issue a forward statement step that should EXHAUST the stop set and end
+   * the session. Races 'terminated' against 'stopped' so a step that terminates
+   * never blocks the suite waiting 30s for a 'stopped' that will never come, and
+   * a step that (wrongly, pre-S20) clamps-in-place resolves promptly as false.
+   * Returns true iff the session terminated.
+   */
+  async function stepEndsSession(reqFactory: () => Promise<unknown>): Promise<boolean> {
+    const req = reqFactory();
+    const ended = await Promise.race([
+      dc.waitForEvent('terminated').then(() => true),
+      dc.waitForEvent('stopped').then(() => false),
+    ]);
+    await req;
+    return ended;
+  }
+
   function expect(
     stop: Stop,
-    expected: { index: number; line?: number; ipRef?: string; file?: string; sourceless?: boolean },
+    expected: { index: number; line?: number; col?: number; ipRef?: string; file?: string; sourceless?: boolean },
   ): void {
     assert.strictEqual(stop.index, expected.index, `stopped at trace index ${stop.index}, expected ${expected.index}`);
     if (expected.line !== undefined) {
       assert.strictEqual(stop.line, expected.line, `stopped at line ${stop.line}, expected ${expected.line}`);
+    }
+    if (expected.col !== undefined) {
+      // S19: the frame column is the first non-whitespace column of the line,
+      // NOT the DWARF sub-expression column.
+      assert.strictEqual(stop.col, expected.col, `stopped at column ${stop.col}, expected ${expected.col} (S19)`);
     }
     if (expected.ipRef !== undefined) {
       assert.strictEqual(stop.ipRef, expected.ipRef);
@@ -185,94 +210,105 @@ describe('Stepping spec (docs/stepping.md, DAP level)', () => {
       // S17 drops the #[contractimpl] shim (record 5, :20); the entry stop lands
       // on the first surviving statement stop — the `while` line (:25, record 21).
       const entry = await launchAndStop(STEPPER);
-      expect(entry, { index: 21, line: 25, file: STEPPER_LIB_SUFFIX, ipRef: '0x2a' });
+      // S19: the DWARF column of the `while` line was 15 (the sub-expression);
+      // the frame now reports the first non-whitespace column (9).
+      expect(entry, { index: 21, line: 25, col: 9, file: STEPPER_LIB_SUFFIX, ipRef: '0x2a' });
     });
 
     it('S4: stepIn enters the callee at its first mapped line', async () => {
       await launchAndStop(STEPPER);
-      expect(await stmtNext(1), { index: 27, line: 26 });
+      // S19: :26's DWARF column was 36; the first non-whitespace column is 13.
+      expect(await stmtNext(1), { index: 27, line: 26, col: 13 });
       // triple collapses onto its `fn` signature (:15), kept by the S17
-      // sole-frame-stop exception, so step-in still has a target.
+      // sole-frame-stop exception, so step-in still has a target. S19: the DWARF
+      // column was undefined/0; the first non-whitespace column is 1.
       const stop = await stopAfter(dc.stepInRequest(STMT));
-      expect(stop, { index: 29, line: 15, file: STEPPER_LIB_SUFFIX, ipRef: '0x3' });
+      expect(stop, { index: 29, line: 15, col: 1, file: STEPPER_LIB_SUFFIX, ipRef: '0x3' });
     });
 
     it('S5/I1: next steps over the implicit-return call in one press', async () => {
       await launchAndStop(STEPPER);
-      expect(await stmtNext(1), { index: 27, line: 26 });
+      expect(await stmtNext(1), { index: 27, line: 26, col: 13 });
       // triple's return is implicit (no return record): one press must still
       // step over the whole call and land on the loop line's next run.
       const stop = await stopAfter(dc.nextRequest(STMT));
-      expect(stop, { index: 39, line: 25, file: STEPPER_LIB_SUFFIX, ipRef: '0x49' });
+      expect(stop, { index: 39, line: 25, col: 9, file: STEPPER_LIB_SUFFIX, ipRef: '0x49' });
     });
 
-    it('S6/S2: the loop stops once per iteration, then forward steps clamp', async () => {
+    it('S6/S20: the loop stops once per iteration, then a forward step terminates', async () => {
       await launchAndStop(STEPPER);
       // Entry already sits on the first :25 run start (21); `next` (step over)
       // then alternates :26/:25 once per iteration, skipping the deeper triple.
-      const sequence: [number, number][] = [
-        [27, 26],
-        [39, 25],
-        [44, 26],
-        [56, 25],
-        [61, 26],
-        [73, 25],
+      const sequence: { index: number; line: number; col: number }[] = [
+        { index: 27, line: 26, col: 13 },
+        { index: 39, line: 25, col: 9 },
+        { index: 44, line: 26, col: 13 },
+        { index: 56, line: 25, col: 9 },
+        { index: 61, line: 26, col: 13 },
+        { index: 73, line: 25, col: 9 },
       ];
-      for (const [index, line] of sequence) {
-        expect(await stopAfter(dc.nextRequest(STMT)), { index, line });
+      for (const step of sequence) {
+        expect(await stopAfter(dc.nextRequest(STMT)), step);
       }
-      // S2: no further statement stop ahead (the :20 epilogue is dropped by
-      // S17) — stay on the last one, still a stop.
-      expect(await stopAfter(dc.nextRequest(STMT)), { index: 73, line: 25 });
+      // S20: no further statement stop ahead (the :20 epilogue is dropped by
+      // S17) — a forward statement step ends the session instead of clamping.
+      assert.ok(
+        await stepEndsSession(() => dc.nextRequest(STMT)),
+        'expected the forward statement step past the last stop to terminate (S20)',
+      );
     });
 
     it('S7/I7/S16: stepOut from the callee lands on the next shallower run start, mapped', async () => {
       await launchAndStop(STEPPER);
       await stmtNext(1);
-      expect(await stopAfter(dc.stepInRequest(STMT)), { index: 29, line: 15 });
+      expect(await stopAfter(dc.stepInRequest(STMT)), { index: 29, line: 15, col: 1 });
       const stop = await stopAfter(dc.stepOutRequest(STMT));
-      expect(stop, { index: 39, line: 25, file: STEPPER_LIB_SUFFIX, ipRef: '0x49' });
+      expect(stop, { index: 39, line: 25, col: 9, file: STEPPER_LIB_SUFFIX, ipRef: '0x49' });
     });
 
-    it('S7/S2: stepOut at the outermost depth runs to the last statement stop', async () => {
+    it('S7/S20: statement stepOut at the outermost depth terminates the session', async () => {
       await launchAndStop(STEPPER);
-      const stop = await stopAfter(dc.stepOutRequest(STMT));
-      expect(stop, { index: 73, line: 25, ipRef: '0x49' });
+      // The entry stop (index 21) is at the outermost recorded depth: there is no
+      // shallower run start, so a statement stepOut terminates (S20/S7).
+      assert.ok(
+        await stepEndsSession(() => dc.stepOutRequest(STMT)),
+        'expected stepOut at the outermost depth to terminate (S20)',
+      );
     });
 
     it('S8: stepBack lands on the previous run start, skipping the deeper frame', async () => {
       await launchAndStop(STEPPER);
-      expect(await stmtNext(2), { index: 39, line: 25 });
+      expect(await stmtNext(2), { index: 39, line: 25, col: 9 });
       const stop = await stopAfter(dc.stepBackRequest(STMT));
-      expect(stop, { index: 27, line: 26, ipRef: '0x35' });
+      expect(stop, { index: 27, line: 26, col: 13, ipRef: '0x35' });
     });
 
     it('S8: stepBack from inside the callee lands on the caller run start', async () => {
       await launchAndStop(STEPPER);
       await stmtNext(1);
-      expect(await stopAfter(dc.stepInRequest(STMT)), { index: 29, line: 15 });
+      expect(await stopAfter(dc.stepInRequest(STMT)), { index: 29, line: 15, col: 1 });
       const stop = await stopAfter(dc.stepBackRequest(STMT));
-      expect(stop, { index: 27, line: 26 });
+      expect(stop, { index: 27, line: 26, col: 13 });
     });
 
     it('S9/S3: reverse stepping revisits the per-iteration stops, then clamps at the first', async () => {
       await launchAndStop(STEPPER);
       // Run to the last stop point (S14), then walk the whole trace backwards.
-      expect(await stopAfter(dc.continueRequest(THREAD)), { index: 73, line: 25 });
-      const sequence: [number, number][] = [
-        [61, 26],
-        [56, 25],
-        [44, 26],
-        [39, 25],
-        [27, 26],
-        [21, 25],
+      expect(await stopAfter(dc.continueRequest(THREAD)), { index: 73, line: 25, col: 9 });
+      const sequence: { index: number; line: number; col: number }[] = [
+        { index: 61, line: 26, col: 13 },
+        { index: 56, line: 25, col: 9 },
+        { index: 44, line: 26, col: 13 },
+        { index: 39, line: 25, col: 9 },
+        { index: 27, line: 26, col: 13 },
+        { index: 21, line: 25, col: 9 },
       ];
-      for (const [index, line] of sequence) {
-        expect(await stopAfter(dc.stepBackRequest(STMT)), { index, line });
+      for (const step of sequence) {
+        expect(await stopAfter(dc.stepBackRequest(STMT)), step);
       }
-      // S3: no earlier statement stop (the :20 shim is dropped by S17) — stay
-      // on the first one, still a stop.
-      expect(await stopAfter(dc.stepBackRequest(STMT)), { index: 21, line: 25 });
+      // S3/S8: no earlier statement stop (the :20 shim is dropped by S17) — a
+      // reverse step CLAMPS on the first one (never terminates, S20 is forward-only).
+      expect(await stopAfter(dc.stepBackRequest(STMT)), { index: 21, line: 25, col: 9 });
     });
   });
 
@@ -292,7 +328,9 @@ describe('Stepping spec (docs/stepping.md, DAP level)', () => {
       await launchAndStop(STEPPER);
       await stmtNext(1);
       expect(await stopAfter(dc.stepInRequest(INSTR)), { index: 28, ipRef: '0x37' });
-      expect(await stopAfter(dc.stepInRequest(INSTR)), { index: 29, ipRef: '0x3', line: 15 });
+      // S19: resting on a mapped record, the frame column is the line start (1),
+      // even at instruction granularity — only disassembly rows keep DWARF cols.
+      expect(await stopAfter(dc.stepInRequest(INSTR)), { index: 29, ipRef: '0x3', line: 15, col: 1 });
       // stepBack is reverse-next: from the callee's first record back to the call.
       expect(await stopAfter(dc.stepBackRequest(INSTR)), { index: 28, ipRef: '0x37' });
       // next skips the whole callee frame (29..31) in one press.
@@ -312,7 +350,7 @@ describe('Stepping spec (docs/stepping.md, DAP level)', () => {
     it('S7: instruction stepOut leaves the callee to the next shallower visible record', async () => {
       await launchAndStop(STEPPER);
       await stmtNext(1);
-      expect(await stopAfter(dc.stepInRequest(STMT)), { index: 29, line: 15 });
+      expect(await stopAfter(dc.stepInRequest(STMT)), { index: 29, line: 15, col: 1 });
       const stop = await stopAfter(dc.stepOutRequest(INSTR));
       expect(stop, { index: 32, ipRef: '0x3d' });
     });
@@ -372,6 +410,7 @@ describe('Stepping spec (docs/stepping.md, DAP level)', () => {
         expect(await stopAfter(dc.continueRequest(THREAD), 'breakpoint'), {
           index,
           line: 15,
+          col: 1,
           ipRef: '0x3',
         });
       }
@@ -408,7 +447,8 @@ describe('Stepping spec (docs/stepping.md, DAP level)', () => {
       const res = await setInstructionBreakpoints([{ instructionReference: '0x3' }]);
       assert.strictEqual(res.body.breakpoints[0].verified, true);
       for (const index of [29, 46, 63]) {
-        expect(await stopAfter(dc.continueRequest(THREAD), 'breakpoint'), { index, ipRef: '0x3' });
+        // Each hit rests on the mapped :15 record — S19 line-start column 1.
+        expect(await stopAfter(dc.continueRequest(THREAD), 'breakpoint'), { index, col: 1, ipRef: '0x3' });
       }
     });
   });
@@ -418,7 +458,7 @@ describe('Stepping spec (docs/stepping.md, DAP level)', () => {
       // The two :12 run starts (records 6, 40) are the #[contractimpl] shim,
       // dropped by S17 — leaving one statement stop, the body `a + b` (:16).
       const entry = await launchAndStop(ADDER);
-      expect(entry, { index: 29, line: 16, file: ADDER_LIB_SUFFIX, ipRef: '0x2d' });
+      expect(entry, { index: 29, line: 16, col: 9, file: ADDER_LIB_SUFFIX, ipRef: '0x2d' });
     });
 
     it('S10/I2: no dead presses at the trace start, in either direction', async () => {
@@ -433,18 +473,22 @@ describe('Stepping spec (docs/stepping.md, DAP level)', () => {
       expect(await stopAfter(dc.stepBackRequest(INSTR)), { index: 6, ipRef: '0x5' });
     });
 
-    it('S2/S17: with a single statement stop, statement `next` clamps in place', async () => {
+    it('S20/S17: with a single statement stop, a forward statement `next` terminates', async () => {
       await launchAndStop(ADDER);
       // The only statement stop is 29 (:16): the two #[contractimpl] :12 run
-      // starts are dropped by S17, so `next` has nowhere to go and stays put.
-      expect(await stopAfter(dc.nextRequest(STMT)), { index: 29, line: 16, ipRef: '0x2d' });
-      expect(await stopAfter(dc.nextRequest(STMT)), { index: 29, line: 16 });
+      // starts are dropped by S17, so a forward statement `next` has nowhere to
+      // go and ends the session (S20) instead of clamping in place.
+      assert.ok(
+        await stepEndsSession(() => dc.nextRequest(STMT)),
+        'expected the sole-stop forward statement next to terminate (S20)',
+      );
     });
 
     it('S3/I5: statement stepBack at the sole run start stays mapped', async () => {
       await launchAndStop(ADDER);
+      // Reverse steps CLAMP (S3/S8) — they never terminate, even at the sole stop.
       const stop = await stopAfter(dc.stepBackRequest(STMT));
-      expect(stop, { index: 29, line: 16, file: ADDER_LIB_SUFFIX });
+      expect(stop, { index: 29, line: 16, col: 9, file: ADDER_LIB_SUFFIX });
     });
 
     it('I4/S12/S13: a lib.rs:16 breakpoint stops once per execution, symmetric in reverse', async () => {

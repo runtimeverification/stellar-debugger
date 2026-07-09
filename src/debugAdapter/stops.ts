@@ -230,6 +230,24 @@ export function statementStops(
   return result;
 }
 
+/**
+ * The 1-based column of the first non-whitespace character of a source line
+ * (S19). Returns null when the text is null or entirely whitespace, so the
+ * caller can fall back to the DWARF column. This is what a statement stop's
+ * stack frame reports instead of the arbitrary DWARF sub-expression column.
+ */
+export function firstNonWhitespaceColumn(text: string | null): number | null {
+  if (text === null) {
+    return null;
+  }
+  for (let i = 0; i < text.length; i++) {
+    if (!/\s/.test(text[i])) {
+      return i + 1;
+    }
+  }
+  return null;
+}
+
 /** Index of the sorted range containing `pos`, or -1 when outside all of them. */
 function functionIndexAt(ranges: readonly FunctionRange[], pos: number): number {
   let lo = 0;

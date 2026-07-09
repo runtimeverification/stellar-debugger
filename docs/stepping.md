@@ -64,10 +64,14 @@ frame) with no stop point at all.
   index 0. The user's first view is a real statement inside the invoked
   function, never the `#[contractimpl]` export shim or a bare signature line,
   and never a sourceless, addressless frame.
-- **S2** (forward exhaustion): a forward step (any kind, any granularity) with
-  no further stop point ahead moves to the **last** stop point of the trace
-  (staying put when already there) and still reports a stop. It never
-  strands the cursor on trailing invisible/unmapped records.
+- **S2** (forward exhaustion): a forward step with no further stop point ahead
+  never strands the cursor on trailing invisible/unmapped records. At
+  **instruction** granularity — and in wasm-less replay, where statement
+  stepping falls back to the visible records — it moves to the **last** stop
+  point of the trace (staying put when already there) and still reports a stop.
+  At **statement** granularity it instead **terminates the session** (S20): a
+  forward source step past the last source statement finishes the replay rather
+  than re-reporting the same line.
 - **S3** (backward exhaustion): a backward step with no earlier stop point
   moves to the **first** stop point (staying put when already there). It never
   falls off onto the unmapped records at the head of the trace.
@@ -80,13 +84,15 @@ frame) with no stop point at all.
 - **S5** (step over): `next` moves to the next run start whose depth is ≤ the
   current depth: a call inside the current line is stepped over in one press —
   including calls whose return is implicit (no `return` record). One press,
-  one new line.
+  one new line. Exhausted forward (no such run start ahead), it terminates the
+  session (S20).
 - **S6** (per-iteration loop stops): a source line that executes again (loop
   back-edge) is a **new** run: `next`/`stepIn` stop once per iteration, even
   when consecutive iterations are separated only by unmapped records.
 - **S7** (step out): `stepOut` moves to the next run start whose depth is <
-  the current depth. At the outermost recorded depth it behaves like S2
-  (runs to the last stop point).
+  the current depth. At the outermost recorded depth there is no shallower
+  stop, so a statement `stepOut` terminates the session (S20); at instruction
+  granularity it clamps to the last visible record (S2).
 - **S8** (reverse step): `stepBack` at statement granularity is the reverse of
   `next`: it moves to the start of the previous run with depth ≤ the current
   depth, skipping deeper-frame records. Landing is always on a run **start**
@@ -130,6 +136,27 @@ frame) with no stop point at all.
   the stack frame carries that record's source and line; the frame is
   sourceless only when the cursor legitimately rests on an unmapped stop point
   (instruction granularity, or no line info at all).
+- **S19** (line-start cursor): whenever the cursor rests on a mapped record, the
+  stack frame's source **column** is the 1-based position of the **first
+  non-whitespace character** of that source line — never the DWARF column,
+  which for an opt-0 line table points at an arbitrary interior sub-expression
+  (the `0` of `let mut acc = 0`, the `3` of `match x % 3`) and jumps
+  unpredictably between visits of the same line. A statement stop already rests
+  on the run start — the line's first executed instruction, before any
+  sub-expression's result is in hand — so with S19 the cursor lands at the
+  start of the statement, predictably, on every visit. Disassembly rows keep
+  their precise per-instruction DWARF columns (`disassembleRequest` is
+  unaffected); S19 governs only the source stack frame.
+- **S20** (statement forward-exhaustion terminates): a forward *statement* step
+  (`next`/`stepIn`/`stepOut`, granularity ≠ `instruction`, over the source
+  run-start stop set) that finds no qualifying stop point ahead ends the debug
+  session with a `TerminatedEvent` instead of clamping in place. The replayed
+  contract has returned from its outermost recorded frame; a user pressing
+  step-over at the closing brace expects the program to finish, not the cursor
+  to sit on the same line. Instruction-granularity forward steps still clamp
+  (S2), `continue`/`reverseContinue` still settle on the last/first stop (S14),
+  and reverse steps still clamp to the first stop (S3/S8) — only forward
+  *source* stepping past the end terminates.
 
 ### Statement stops: declarations and braces
 

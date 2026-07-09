@@ -184,12 +184,9 @@ describe('SorobanDebugSession (DAP replay)', () => {
       assert.strictEqual(frame.line, 16);
       assert.ok(frame.name.includes('[29/40]'), `unexpected frame name: ${frame.name}`);
 
-      // Statement granularity: the :16 body is the only statement stop, so a
-      // step stays put on it (the :12 shim runs are dropped by S17).
-      await stopAfter(dc.nextRequest({ ...THREAD, granularity: 'statement' }), 'step');
-      frame = await topFrame();
-      assert.ok(frame.source?.path?.endsWith(LIB_RS_SUFFIX));
-      assert.strictEqual(frame.line, 16);
+      // (A forward statement next here would exhaust the single stop and END the
+      // session under S20 — see the dedicated S20 test below — so it is omitted
+      // from this breakpoint/reverse-continue flow.)
 
       // Move forward off the run start, then reverse-continue lands on the same
       // run START (29), not on the run's last record (33).
@@ -231,16 +228,21 @@ describe('SorobanDebugSession (DAP replay)', () => {
       assert.ok(frame.name.includes('[40/40]'), `unexpected frame name: ${frame.name}`);
     });
 
-    it('default-granularity next clamps on the single statement stop', async () => {
+    it('S20: default-granularity next past the single statement stop terminates', async () => {
       await launchAndStop(WITH_WASM);
       // The entry stop is the only statement stop, lib.rs:16 (record 29); the
-      // :12 #[contractimpl] runs are dropped by S17, so a default-granularity
-      // next has nowhere to advance and stays put (S2).
-      await stopAfter(dc.nextRequest(THREAD), 'step');
-      const frame = await topFrame();
-      assert.ok(frame.source?.path?.endsWith(LIB_RS_SUFFIX), `unexpected source: ${frame.source?.path}`);
-      assert.strictEqual(frame.line, 16);
-      assert.ok(frame.name.includes('[29/40]'), `unexpected frame name: ${frame.name}`);
+      // :12 #[contractimpl] runs are dropped by S17. A default-granularity next
+      // (granularity !== 'instruction', so it is a statement step) has nowhere to
+      // advance and ENDS the session (S20) instead of clamping in place. Race
+      // 'terminated' vs 'stopped' so a clamp-in-place regression fails fast
+      // rather than blocking on a 'stopped' that never comes.
+      const req = dc.nextRequest(THREAD);
+      const ended = await Promise.race([
+        dc.waitForEvent('terminated').then(() => true),
+        dc.waitForEvent('stopped').then(() => false),
+      ]);
+      await req;
+      assert.ok(ended, 'expected the default-granularity next past the last statement stop to terminate (S20)');
     });
 
     it('instruction-granularity stepIn advances exactly one record', async () => {
