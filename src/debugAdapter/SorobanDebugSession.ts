@@ -31,10 +31,15 @@ import {
   statementStops,
 } from './stops';
 import { SourceMapper } from '../sourcemap/SourceMapper';
+import { VariableResolver, NullVariableResolver } from '../sourcemap/VariableResolver';
 import { Disassembly } from '../wasm/Disassembly';
 import { ResolvedTrace, SessionBackend, SorobanLaunchArgs } from './types';
 import { TypedValue } from '../komet/trace';
 import { renderInstr } from '../komet/mnemonics';
+import { MemoryImage } from './MemoryImage';
+import { makeRuntimeState } from './runtimeState';
+import { DecodedValue, ChildVar } from '../dwarf/ValueDecoder';
+import { ScopeVar } from '../dwarf/ScopeIndex';
 
 const THREAD_ID = 1;
 const FRAME_ID = 1;
@@ -43,6 +48,7 @@ const FRAME_ID = 1;
 enum ScopeRef {
   Locals = 1,
   Stack = 2,
+  SourceVars = 3,
 }
 
 export class SorobanDebugSession extends DebugSession {
@@ -91,6 +97,16 @@ export class SorobanDebugSession extends DebugSession {
   private instructionBreakpointAddrs: number[] = [];
   /** Container handles for structured variable expansion. */
   private readonly variableHandles = new Handles<TypedValue[]>();
+  /** Source-level variable resolver (Null until a DWARF-bearing wasm loads). */
+  private variables: VariableResolver = new NullVariableResolver();
+  /** Folded linear-memory view for decoding memory-backed source variables. */
+  private memoryImage?: MemoryImage;
+  /**
+   * Handles for lazily-expanded source-variable children. High start avoids
+   * colliding with the fixed ScopeRef range; reset on every stop so refs are
+   * fresh per cursor position.
+   */
+  private readonly sourceVarChildren = new Handles<() => ChildVar[]>(1000);
 
   constructor(backend: SessionBackend) {
     super();
@@ -137,6 +153,8 @@ export class SorobanDebugSession extends DebugSession {
       const resolved: ResolvedTrace = await this.backend.resolve(args, (msg) => this.log(msg));
       this.model = resolved.model;
       this.source = resolved.source;
+      this.variables = resolved.variables;
+      this.memoryImage = new MemoryImage(this.model.records);
       this.disassembly = resolved.disassembly;
       this.positions = resolved.positions;
       this.validatedPosToIndices = new Map();
@@ -351,6 +369,24 @@ export class SorobanDebugSession extends DebugSession {
     return undefined;
   }
 
+  /**
+   * The current record's validated code offset, or — when it has none — the
+   * NEAREST earlier record that does, so in-scope variable lookup stays
+   * anchored on the last real instruction. Null when no record qualifies.
+   */
+  private currentPc(): number | null {
+    if (!this.model) {
+      return null;
+    }
+    for (let i = this.model.cursor; i >= 0; i--) {
+      const pos = this.positions[i];
+      if (pos !== null && pos !== undefined) {
+        return pos;
+      }
+    }
+    return null;
+  }
+
   protected disassembleRequest(
     response: DebugProtocol.DisassembleResponse,
     args: DebugProtocol.DisassembleArguments,
@@ -403,12 +439,18 @@ export class SorobanDebugSession extends DebugSession {
     response: DebugProtocol.ScopesResponse,
     _args: DebugProtocol.ScopesArguments,
   ): void {
-    response.body = {
-      scopes: [
-        new Scope('Locals', ScopeRef.Locals, false),
-        new Scope('Value Stack', ScopeRef.Stack, false),
-      ],
-    };
+    // Fresh child-expansion refs per stop: last cursor's handles are stale.
+    this.sourceVarChildren.reset();
+    const scopes: Scope[] = [
+      new Scope('Locals', ScopeRef.Locals, false),
+      new Scope('Value Stack', ScopeRef.Stack, false),
+    ];
+    // The source-level Variables scope is offered only when the resolver has
+    // DWARF functions; without it the list is exactly [Locals, Value Stack].
+    if (this.variables.hasVariables()) {
+      scopes.unshift(new Scope('Variables', ScopeRef.SourceVars, false));
+    }
+    response.body = { scopes };
     this.sendResponse(response);
   }
 
@@ -418,6 +460,39 @@ export class SorobanDebugSession extends DebugSession {
   ): void {
     const variables: DebugProtocol.Variable[] = [];
     const rec = this.model?.current;
+
+    if (args.variablesReference === ScopeRef.SourceVars) {
+      // Source-level variables: resolve the in-scope DWARF variables at the
+      // current PC and decode each against the folded runtime state.
+      if (this.model && this.memoryImage) {
+        const pc = this.currentPc();
+        if (pc !== null) {
+          const state = makeRuntimeState(this.model.current, this.memoryImage, this.model.cursor);
+          for (const v of this.variables.variablesInScope(pc) as ScopeVar[]) {
+            const decoded = this.variables.decodeVariable(v, state, pc);
+            variables.push(this.toDapVariable(v.name ?? '<anon>', decoded));
+          }
+        }
+      }
+      response.body = { variables };
+      this.sendResponse(response);
+      return;
+    }
+
+    const childThunk = this.sourceVarChildren.get(args.variablesReference);
+    if (childThunk) {
+      // A lazily-expanded source-variable container handed out via toDapVariable.
+      try {
+        for (const child of childThunk()) {
+          variables.push(this.toDapVariable(child.name, child.value));
+        }
+      } catch {
+        variables.push({ name: '<error>', value: '<unreadable>', variablesReference: 0 });
+      }
+      response.body = { variables };
+      this.sendResponse(response);
+      return;
+    }
 
     if (rec) {
       if (args.variablesReference === ScopeRef.Locals) {
@@ -664,6 +739,16 @@ export class SorobanDebugSession extends DebugSession {
       type,
       variablesReference: 0,
     };
+  }
+
+  /**
+   * Render a decoded source-level value as a DAP variable. Expandable values
+   * register their lazy children behind a fresh `sourceVarChildren` handle;
+   * leaves report a zero reference (not expandable).
+   */
+  private toDapVariable(name: string, decoded: DecodedValue): DebugProtocol.Variable {
+    const variablesReference = decoded.children ? this.sourceVarChildren.create(decoded.children) : 0;
+    return { name, value: decoded.display, type: decoded.typeName, variablesReference };
   }
 
   private log(message: string): void {

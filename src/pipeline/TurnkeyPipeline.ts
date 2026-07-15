@@ -19,6 +19,7 @@ import { ContractBuilder } from '../build/ContractBuilder';
 import { SorobanTxBuilder } from '../soroban/SorobanTxBuilder';
 import { encodeArgs } from '../soroban/scval';
 import { parseTraceJsonl } from '../komet/trace';
+import { stripDebugSections } from '../wasm/sections';
 import { promises as fs } from 'fs';
 import { TraceModel } from '../debugAdapter/TraceModel';
 import { buildDebugArtifacts } from '../debugAdapter/artifacts';
@@ -62,9 +63,13 @@ export class TurnkeyPipeline {
     report('Seeding source account (CreateAccount) ...');
     await client.sendTransaction(txBuilder.buildCreateAccount(source));
 
-    // 4. Upload wasm.
-    report('Uploading contract wasm ...');
-    const upload = txBuilder.buildUploadWasm(source, wasm);
+    // 4. Upload wasm. komet-node only executes the code; the DWARF custom
+    // sections just bloat the KORE config it re-parses per RPC call, so strip
+    // them for the upload. The code section stays byte-identical, keeping trace
+    // `pos` aligned with the full `wasm` the adapter uses for debug artifacts.
+    const uploadWasm = stripDebugSections(wasm);
+    report(`Uploading contract wasm (${wasm.length} bytes, ${uploadWasm.length} after stripping debug sections) ...`);
+    const upload = txBuilder.buildUploadWasm(source, Buffer.from(uploadWasm));
     await client.sendTransaction(upload.envelopeXdr);
 
     // 5. Create contract.
@@ -98,9 +103,9 @@ export class TurnkeyPipeline {
     // disassembly and (when built with debug info) the DWARF source mapping.
     const records = parseTraceJsonl(trace);
     const model = new TraceModel(records);
-    const { source: sourceMapper, disassembly, positions } = buildDebugArtifacts(wasm, model, report);
+    const { source: sourceMapper, variables, disassembly, positions } = buildDebugArtifacts(wasm, model, report);
 
-    return { model, source: sourceMapper, disassembly, positions };
+    return { model, source: sourceMapper, variables, disassembly, positions };
   }
 
   async dispose(): Promise<void> {

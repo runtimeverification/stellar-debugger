@@ -8,6 +8,7 @@
 import { DebugProtocol } from '@vscode/debugprotocol';
 import { TraceModel } from './TraceModel';
 import { SourceMapper } from '../sourcemap/SourceMapper';
+import { VariableResolver } from '../sourcemap/VariableResolver';
 import { Disassembly } from '../wasm/Disassembly';
 import { ScValArg } from '../soroban/scval';
 
@@ -55,6 +56,8 @@ export type ProgressReporter = (message: string) => void;
 export interface ResolvedTrace {
   model: TraceModel;
   source: SourceMapper;
+  /** Resolves and decodes source-level variables at a PC (Null when no DWARF). */
+  variables: VariableResolver;
   /** Static disassembly of the traced contract (trace-derived when no wasm). */
   disassembly: Disassembly;
   /**

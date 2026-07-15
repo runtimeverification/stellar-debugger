@@ -26,6 +26,8 @@ import { normalizeMnemonic } from '../komet/mnemonics';
 import { SourceMapper } from '../sourcemap/SourceMapper';
 import { DwarfSourceMapper } from '../sourcemap/DwarfSourceMapper';
 import { NullSourceMapper } from '../sourcemap/NullSourceMapper';
+import { VariableResolver, NullVariableResolver, DwarfVariableResolver } from '../sourcemap/VariableResolver';
+import { DwarfDebugInfo } from '../dwarf/DebugInfo';
 
 /**
  * Validate each record's `pos` against the static disassembly: the position is
@@ -67,7 +69,7 @@ export function buildDebugArtifacts(
   wasm: Uint8Array,
   model: TraceModel,
   report: ProgressReporter,
-): { source: SourceMapper; disassembly: Disassembly; positions: (number | null)[] } {
+): { source: SourceMapper; variables: VariableResolver; disassembly: Disassembly; positions: (number | null)[] } {
   let disassembly: Disassembly;
   try {
     disassembly = Disassembly.fromWasm(wasm);
@@ -81,6 +83,7 @@ export function buildDebugArtifacts(
     // (there is no independent ground truth to validate against).
     return {
       source: new NullSourceMapper(),
+      variables: new NullVariableResolver(),
       disassembly: Disassembly.fromTrace(model),
       positions: model.records.map((rec) => rec.pos),
     };
@@ -96,17 +99,41 @@ export function buildDebugArtifacts(
         `Warning: could not parse the wasm's DWARF debug info (${errorMessage(err)}); ` +
           'debugging continues at the wasm level.',
       );
-      return { source: new NullSourceMapper(), disassembly, positions };
+      return { source: new NullSourceMapper(), variables: resolveVariables(wasm, report), disassembly, positions };
     }
     throw err;
   }
   if (table === null || table.entries.length === 0) {
     report('Note: the contract wasm carries no DWARF line info; debugging continues at the wasm level.');
-    return { source: new NullSourceMapper(), disassembly, positions };
+    return { source: new NullSourceMapper(), variables: resolveVariables(wasm, report), disassembly, positions };
   }
 
   const source = new DwarfSourceMapper(model, table, positions);
-  return { source, disassembly, positions };
+  return { source, variables: resolveVariables(wasm, report), disassembly, positions };
+}
+
+/**
+ * Resolve the source-level variable resolver from the wasm bytes, in its own
+ * INDEPENDENT try/catch so a variable-resolution failure never disables the
+ * line table (callers have already committed their SourceMapper by this point).
+ * Degrades to a NullVariableResolver — the wasm-level variables view.
+ */
+function resolveVariables(wasm: Uint8Array, report: ProgressReporter): VariableResolver {
+  try {
+    const dwarf = DwarfDebugInfo.fromWasm(wasm);
+    if (dwarf && dwarf.scopes.hasFunctions()) {
+      return new DwarfVariableResolver(dwarf);
+    }
+  } catch (err) {
+    if (err instanceof DwarfParseError || err instanceof WasmFormatError) {
+      report(
+        `Warning: could not parse DWARF variable info (${errorMessage(err)}); variables view stays wasm-level.`,
+      );
+    } else {
+      throw err;
+    }
+  }
+  return new NullVariableResolver();
 }
 
 function errorMessage(err: unknown): string {

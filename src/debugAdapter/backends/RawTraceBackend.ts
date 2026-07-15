@@ -14,6 +14,7 @@ import { parseTraceJsonl } from '../../komet/trace';
 import { TraceModel } from '../TraceModel';
 import { Disassembly } from '../../wasm/Disassembly';
 import { NullSourceMapper } from '../../sourcemap/NullSourceMapper';
+import { NullVariableResolver } from '../../sourcemap/VariableResolver';
 import { buildDebugArtifacts } from '../artifacts';
 import { ProgressReporter, ResolvedTrace, SessionBackend, SorobanLaunchArgs } from '../types';
 
@@ -30,8 +31,8 @@ export class RawTraceBackend implements SessionBackend {
     if (args.wasmPath) {
       report(`Reading contract wasm from ${args.wasmPath}`);
       const wasm = await fs.readFile(args.wasmPath);
-      const { source, disassembly, positions } = buildDebugArtifacts(wasm, model, report);
-      return { model, source, disassembly, positions };
+      const { source, variables, disassembly, positions } = buildDebugArtifacts(wasm, model, report);
+      return { model, source, variables, disassembly, positions };
     }
     // Without wasm there is nothing to validate positions against; the raw
     // `pos` values are used as-is, which is self-consistent because the
@@ -39,6 +40,7 @@ export class RawTraceBackend implements SessionBackend {
     return {
       model,
       source: new NullSourceMapper(),
+      variables: new NullVariableResolver(),
       disassembly: Disassembly.fromTrace(model),
       positions: records.map((rec) => rec.pos),
     };

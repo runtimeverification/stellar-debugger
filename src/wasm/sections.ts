@@ -101,6 +101,34 @@ export function parseWasmSections(bytes: Uint8Array): ParsedWasm {
   };
 }
 
+/**
+ * Rebuilds `bytes` as a wasm binary omitting every custom section (id 0) whose
+ * name `shouldRemove(name)` returns true. All other sections are copied verbatim
+ * (their original bytes, including the size ULEB), so non-custom sections — the
+ * code section in particular — are byte-for-byte unchanged. Returns an
+ * equivalent copy when nothing matches. Throws WasmFormatError on a malformed
+ * header (structure is validated via parseWasmSections).
+ */
+export function stripCustomSections(
+  bytes: Uint8Array,
+  shouldRemove: (name: string) => boolean,
+): Uint8Array {
+  const parsed = parseWasmSections(bytes);
+  const parts: Uint8Array[] = [bytes.subarray(0, WASM_MAGIC.length + WASM_VERSION.length)];
+  for (const s of parsed.sections) {
+    if (s.id === CUSTOM_SECTION_ID && s.name !== undefined && shouldRemove(s.name)) {
+      continue;
+    }
+    parts.push(bytes.subarray(s.start, s.payloadEnd));
+  }
+  return Buffer.concat(parts);
+}
+
+/** Strip DWARF debug sections (`.debug*`). */
+export function stripDebugSections(bytes: Uint8Array): Uint8Array {
+  return stripCustomSections(bytes, (name) => name.startsWith('.debug'));
+}
+
 /** Reads a ULEB128 at `offset`; returns [value, offset after the ULEB]. */
 function readUleb(bytes: Uint8Array, offset: number): [number, number] {
   let value = 0;
