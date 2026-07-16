@@ -1,0 +1,25 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "_comment": "Tests run against COMPILED JS (out/), so Stryker mutates the TypeScript sources and rebuilds ONCE via buildCommand (mutant schemata means no per-mutant recompile). Scope is the pure parsing/encoding core — the DAP tests run the adapter in a child process where mutants are not instrumented, so those test files are excluded via .mocharc.stryker.json.",
+  "packageManager": "npm",
+  "testRunner": "mocha",
+  "buildCommand": "tsc -p tsconfig.test.json",
+  "ignorePatterns": ["coverage", "reports", "dist", "out", ".stryker-tmp", "*.vsix"],
+  "mutate": [
+    "src/dwarf/**/*.ts",
+    "src/wasm/**/*.ts",
+    "src/soroban/**/*.ts",
+    "src/komet/trace.ts",
+    "src/komet/mnemonics.ts",
+    "!src/**/*.d.ts"
+  ],
+  "mochaOptions": {
+    "config": ".mocharc.stryker.json"
+  },
+  "reporters": ["html", "clear-text", "progress"],
+  "htmlReporter": { "fileName": "reports/mutation/mutation.html" },
+  "coverageAnalysis": "perTest",
+  "concurrency": 4,
+  "timeoutMS": 20000,
+  "thresholds": { "high": 90, "low": 75, "break": null }
+}

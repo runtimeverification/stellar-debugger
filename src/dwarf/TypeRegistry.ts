@@ -17,6 +17,7 @@
  * Pure module (no `vscode` imports, no external deps).
  */
 
+import { Cursor } from './cursor';
 import { Die, dieName, dieUint, dieRef } from './die';
 import {
   DW_TAG_base_type,
@@ -194,10 +195,17 @@ export class TypeRegistry {
    */
   stripTypedefs(type: DwarfType): DwarfType {
     let current = type;
+    // Guard against cyclic typedef/qualifier chains in malformed DWARF (e.g.
+    // typedef A -> typedef B -> A): without this the loop would spin forever.
+    const seen = new Set<number>();
     while (
       (current.kind === 'typedef' || current.kind === 'qualifier') &&
       current.targetRef !== undefined
     ) {
+      if (seen.has(current.targetRef)) {
+        break;
+      }
+      seen.add(current.targetRef);
       current = this.resolve(current.targetRef);
     }
     return current;
@@ -319,7 +327,7 @@ function memberOffset(die: Die): number {
     return loc.value;
   }
   if (loc.kind === 'block' && loc.value.length >= 1 && loc.value[0] === DW_OP_plus_uconst) {
-    return readUleb(loc.value, 1);
+    return new Cursor(loc.value.subarray(1)).uleb();
   }
   return 0;
 }
@@ -339,19 +347,4 @@ function arrayCount(die: Die): number | undefined {
   }
   const upper = dieUint(sub, DW_AT_upper_bound);
   return upper === undefined ? undefined : upper + 1;
-}
-
-/** Decodes a ULEB128 from `bytes` starting at `start`. */
-function readUleb(bytes: Uint8Array, start: number): number {
-  let result = 0;
-  let shift = 0;
-  for (let i = start; i < bytes.length; i++) {
-    const byte = bytes[i];
-    result += (byte & 0x7f) * 2 ** shift;
-    if ((byte & 0x80) === 0) {
-      break;
-    }
-    shift += 7;
-  }
-  return result;
 }

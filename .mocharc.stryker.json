@@ -1,0 +1,16 @@
+{
+  "spec": [
+    "out/test/**/*.test.js"
+  ],
+  "ignore": [
+    "out/test/dap.test.js",
+    "out/test/dapStepping.test.js",
+    "out/test/dapControlStepping.test.js",
+    "out/test/dapVariables.test.js",
+    "out/test/dapMemoryVariables.test.js",
+    "out/test/integration.node.test.js",
+    "out/test/integration.build.test.js",
+    "out/test/contractBuilder.test.js"
+  ],
+  "timeout": 30000
+}
