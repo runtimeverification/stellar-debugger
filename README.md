@@ -87,6 +87,13 @@ step through — forward or backward.
 Two settings let you point at executables that aren't on your `PATH`:
 `soroban.stellar.path` and `soroban.kometNode.path`.
 
+### Beyond the editor
+
+The debugger is also available outside VS Code — as a one-shot CLI that prints a
+Rust-level execution trace as JSONL (for scripts, CI, and AI agents), and as a
+standalone DAP server over TCP (for other editors). See
+[**docs/standalone-interfaces.md**](docs/standalone-interfaces.md).
+
 ## Contributing
 
 Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for how to
