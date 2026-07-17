@@ -1,5 +1,13 @@
 # Debugger interfaces
 
+> **Audience:** `contributor` · `maintainer` · `integrator` (internals)
+>
+> **TL;DR:** The internal design behind the three ways to consume the adapter
+> (VS Code inline, TCP DAP server, one-shot CLI) and the `vscode`-free shared
+> core they all sit on. Documents the `SourceStop`/`TraceVar` JSONL schema and
+> the ground-truth fixtures. For *user*-facing usage of the standalone tools,
+> see [`standalone-interfaces.md`](./standalone-interfaces.md).
+
 The trace-replay debug adapter (`SorobanDebugSession`) can be consumed three ways.
 All three share one headless, `vscode`-free core; none of them touch the DAP
 stepping engine (S1–S20, see [`stepping.md`](./stepping.md)).

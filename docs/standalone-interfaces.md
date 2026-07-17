@@ -1,5 +1,13 @@
 # Standalone interfaces: CLI trace & DAP server
 
+> **Audience:** `soroban developer` (outside VS Code) · `CI / scripting user` ·
+> `AI agent integrator` · `other-editor user`
+>
+> **TL;DR:** How to use the debugger without VS Code. `soroban-trace` prints a
+> Rust-source-level execution trace as JSONL (for scripts, CI, and agents);
+> `soroban-dap` serves the debug adapter over TCP so nvim-dap/IntelliJ/Emacs can
+> drive it. Includes building the tools, offline & live usage, and every flag.
+
 Besides the VS Code extension, the debugger ships two standalone command-line
 tools for using it **outside the editor**:
 
@@ -12,6 +20,17 @@ tools for using it **outside the editor**:
 Both are thin front-ends over the same replay engine the extension uses; see
 [`interfaces.md`](./interfaces.md) for the internal design and the full JSONL
 schema.
+
+```mermaid
+flowchart LR
+    Q{"How do you want<br/>to consume the debugger?"}
+    Q -->|"read an execution<br/>(scripts / CI / AI agents)"| T["soroban-trace<br/>one-shot JSONL trace"]
+    Q -->|"step interactively<br/>in another editor"| D["soroban-dap<br/>TCP DAP server"]
+    Q -->|"step interactively<br/>in VS Code"| E["the VS Code extension<br/>(see the main README)"]
+    T --> CORE["shared replay engine"]
+    D --> CORE
+    E --> CORE
+```
 
 ## Building the tools
 

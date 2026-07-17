@@ -1,5 +1,12 @@
 # Stellar Debugger
 
+> **Audience:** `soroban developer` · `contract author` · `new user`
+>
+> **TL;DR:** What the extension is and how to use it — install it, add a
+> `soroban` launch config, press **F5**, and step forward/backward through your
+> Rust contract. Covers requirements, the launch-config reference, and where to
+> go for use outside VS Code.
+
 **Time-travel debugging for Stellar/Soroban smart contracts, right inside your
 editor.** Set a breakpoint in your Rust contract, hit debug, and step **forward
 and backward** through exactly what your contract did — line by line.
