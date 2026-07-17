@@ -4,22 +4,37 @@ The trace-replay debug adapter (`SorobanDebugSession`) can be consumed three way
 All three share one headless, `vscode`-free core; none of them touch the DAP
 stepping engine (S1–S20, see [`stepping.md`](./stepping.md)).
 
-```
-                         ┌─────────────────────────────┐
-                         │  SessionBackend.resolve()    │  RawTraceBackend | LiveBackend
-                         │        → ResolvedTrace       │
-                         └──────────────┬──────────────┘
-                                        │
-                     ┌──────────────────┼──────────────────┐
-                     │                  │                  │
-              buildStopModel     SorobanDebugSession   buildStopModel
-                     │            (DAP handlers)             │
-              projectSourceStop         │            projectSourceStop
-                     │                  │                  │
-             ┌───────┴───────┐   ┌──────┴───────┐   ┌───────┴────────┐
-             │  CLI (JSONL)  │   │ VS Code inline│   │  TCP DAP server │
-             │ soroban-trace │   │  + TCP server │   │  soroban-dap    │
-             └───────────────┘   └──────────────┘   └────────────────┘
+```mermaid
+flowchart TB
+    BF["backendFor(args)"]
+    BF -->|"rawTrace set"| RTB["RawTraceBackend<br/>offline JSONL replay"]
+    BF -->|"otherwise"| LB["LiveBackend<br/>build → komet-node → trace"]
+    RTB --> RT["ResolvedTrace"]
+    LB --> RT
+
+    subgraph core["shared headless core — vscode-free"]
+        BSM["buildStopModel → StopModel<br/>single source of truth for stop points"]
+        PCA["pcAtIndex"]
+        PSS["projectSourceStop<br/>serializable, eager var expansion"]
+    end
+
+    RT --> BSM
+    PCA --> PSS
+
+    BSM --> SDS["SorobanDebugSession<br/>DAP handlers + stepping engine"]
+    PCA --> SDS
+    BSM --> RCT["runCliTrace"]
+    PSS --> RCT
+
+    subgraph ifaces["interfaces"]
+        VSC["VS Code inline"]
+        DAP["soroban-dap<br/>standalone TCP DAP server"]
+        CLI["soroban-trace<br/>one-shot JSONL trace"]
+    end
+
+    SDS --> VSC
+    SDS --> DAP
+    RCT --> CLI
 ```
 
 ## Shared headless core
