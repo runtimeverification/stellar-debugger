@@ -31,6 +31,28 @@ Then:
 npm install
 ```
 
+### SSH keys in the devcontainer
+
+`~/.ssh` is a named Docker volume, so keys **persist across container rebuilds**
+— but the volume starts **empty** on first build, so add a key once. The volume
+lives outside `/workspace`, so keys can't be committed to the repo, and Docker
+excludes volumes from `docker commit` / image builds. (Anyone with root or
+`docker`-group access on the host can still read the volume, so prefer a
+passphrase or a dedicated, revocable key.)
+
+Inside the container, generate a key:
+
+```bash
+ssh-keygen -t ed25519 -C "you@example.com"   # writes ~/.ssh/id_ed25519[.pub]
+chmod 700 ~/.ssh
+chmod 600 ~/.ssh/id_ed25519
+chmod 644 ~/.ssh/id_ed25519.pub
+```
+
+Then add the **public** key (`~/.ssh/id_ed25519.pub`) to your GitHub account at
+<https://github.com/settings/ssh/new>. To reuse an existing host key instead,
+`docker cp` it into the container's `~/.ssh` and apply the same `chmod`.
+
 ## Everyday commands
 
 ```bash
