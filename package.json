@@ -226,7 +226,7 @@
     "@typescript-eslint/parser": "^8.0.0",
     "@vscode/debugadapter-testsupport": "^1.68.0",
     "c8": "^11.0.0",
-    "esbuild": "^0.23.0",
+    "esbuild": "^0.28.1",
     "eslint": "^8.57.0",
     "fast-check": "^4.9.0",
     "mocha": "^10.7.0",
