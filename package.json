@@ -13,6 +13,10 @@
     "Debuggers"
   ],
   "main": "./dist/extension.js",
+  "bin": {
+    "soroban-dap": "dist/dap-server.js",
+    "soroban-trace": "dist/trace.js"
+  },
   "activationEvents": [
     "onDebug"
   ],

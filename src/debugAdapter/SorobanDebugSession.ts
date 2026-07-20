@@ -23,13 +23,8 @@ import {
 import { DebugProtocol } from '@vscode/debugprotocol';
 import * as path from 'path';
 import { TraceModel } from './TraceModel';
-import {
-  classifyLineRole,
-  computeDepths,
-  computeRunStarts,
-  firstNonWhitespaceColumn,
-  statementStops,
-} from './stops';
+import { firstNonWhitespaceColumn } from './stops';
+import { buildStopModel, pcAtIndex } from './stopModel';
 import { SourceMapper } from '../sourcemap/SourceMapper';
 import { VariableResolver, NullVariableResolver } from '../sourcemap/VariableResolver';
 import { Disassembly } from '../wasm/Disassembly';
@@ -52,7 +47,13 @@ enum ScopeRef {
 }
 
 export class SorobanDebugSession extends DebugSession {
-  private readonly backend: SessionBackend;
+  /**
+   * Either a concrete backend or a selector resolved on the first line of
+   * launchRequest (the TCP server passes the selector so the backend can depend
+   * on the per-connection launch config). Once launched, this holds the
+   * concrete backend.
+   */
+  private backend: SessionBackend | ((args: SorobanLaunchArgs) => SessionBackend);
   private model?: TraceModel;
   private source?: SourceMapper;
   private disassembly?: Disassembly;
@@ -108,7 +109,15 @@ export class SorobanDebugSession extends DebugSession {
    */
   private readonly sourceVarChildren = new Handles<() => ChildVar[]>(1000);
 
-  constructor(backend: SessionBackend) {
+  /**
+   * Set once the per-connection backend has been disposed, so teardown is
+   * idempotent: a clean `disconnect` disposes, and the subsequent socket
+   * 'close'/'error' from the TCP server must NOT dispose the (already torn
+   * down) komet-node pipeline a second time.
+   */
+  private disposed = false;
+
+  constructor(backend: SessionBackend | ((args: SorobanLaunchArgs) => SessionBackend)) {
     super();
     this.backend = backend;
     this.setDebuggerLinesStartAt1(true);
@@ -149,6 +158,12 @@ export class SorobanDebugSession extends DebugSession {
     response: DebugProtocol.LaunchResponse,
     args: SorobanLaunchArgs,
   ): Promise<void> {
+    // Resolve the backend selector (TCP server) to a concrete backend now that
+    // the per-connection launch config is known; a concrete backend passes
+    // through unchanged.
+    if (typeof this.backend === 'function') {
+      this.backend = this.backend(args);
+    }
     try {
       const resolved: ResolvedTrace = await this.backend.resolve(args, (msg) => this.log(msg));
       this.model = resolved.model;
@@ -157,25 +172,12 @@ export class SorobanDebugSession extends DebugSession {
       this.memoryImage = new MemoryImage(this.model.records);
       this.disassembly = resolved.disassembly;
       this.positions = resolved.positions;
-      this.validatedPosToIndices = new Map();
-      this.visibleIndices = [];
-      this.positions.forEach((pos, i) => {
-        if (pos !== null) {
-          this.visibleIndices.push(i);
-          const list = this.validatedPosToIndices.get(pos);
-          if (list) {
-            list.push(i);
-          } else {
-            this.validatedPosToIndices.set(pos, [i]);
-          }
-        }
-      });
-      const source = this.source;
-      this.depths = computeDepths(this.model.records, this.positions, this.disassembly.functionRanges);
-      this.rawRunStarts = computeRunStarts(this.positions, this.depths, (i) => source.lineKeyForIndex(i));
-      this.runStarts = statementStops(this.rawRunStarts, this.depths, (i) =>
-        classifyLineRole(source.sourceTextForIndex(i)),
-      );
+      const stopModel = buildStopModel(resolved);
+      this.validatedPosToIndices = stopModel.validatedPosToIndices;
+      this.visibleIndices = stopModel.visibleIndices;
+      this.depths = stopModel.depths;
+      this.rawRunStarts = stopModel.rawRunStarts;
+      this.runStarts = stopModel.runStarts;
 
       if (this.model.isEmpty) {
         this.sendErrorResponse(response, 2001, 'The trace is empty; nothing to debug.');
@@ -378,13 +380,7 @@ export class SorobanDebugSession extends DebugSession {
     if (!this.model) {
       return null;
     }
-    for (let i = this.model.cursor; i >= 0; i--) {
-      const pos = this.positions[i];
-      if (pos !== null && pos !== undefined) {
-        return pos;
-      }
-    }
-    return null;
+    return pcAtIndex(this.positions, this.model.cursor);
   }
 
   protected disassembleRequest(
@@ -583,12 +579,35 @@ export class SorobanDebugSession extends DebugSession {
     response: DebugProtocol.DisconnectResponse,
     _args: DebugProtocol.DisconnectArguments,
   ): Promise<void> {
+    await this.teardown();
+    this.sendResponse(response);
+  }
+
+  /**
+   * Dispose the per-connection backend exactly once. This is the single place
+   * `backend.dispose()` runs, reached both by the client's `disconnect` request
+   * and by the TCP server's socket 'close'/'error' handlers (an abrupt
+   * disconnect — editor crash, network drop, SIGKILL — sends no `disconnect`
+   * over the wire, so without this the LiveBackend's komet-node subprocess would
+   * leak). Public and idempotent: the `disposed` guard makes a second call after
+   * a clean disconnect a no-op, so the komet-node pipeline is never
+   * double-disposed. NOTE: `DebugSession.shutdown()` is a no-op in server mode,
+   * so it can NOT be relied on for backend teardown — this must be called directly.
+   */
+  async teardown(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+    this.disposed = true;
     try {
-      await this.backend.dispose();
+      // A launch may never have happened, in which case the backend is still a
+      // selector function with nothing to dispose.
+      if (typeof this.backend !== 'function') {
+        await this.backend.dispose();
+      }
     } catch {
       // best-effort teardown
     }
-    this.sendResponse(response);
   }
 
   protected async terminateRequest(

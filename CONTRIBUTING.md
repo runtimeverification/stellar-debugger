@@ -1,5 +1,12 @@
 # Contributing
 
+> **Audience:** `contributor` · `maintainer`
+>
+> **TL;DR:** How to hack on the extension — set up a dev environment
+> (devcontainer or by hand), the everyday build/lint/test commands, the
+> test-first convention and how to regenerate fixtures, and a tour of how the
+> trace-replay adapter works internally (architecture map included).
+
 Thanks for your interest in improving the Soroban Debugger! This document covers
 how to get a development environment running and the conventions we follow.
 
@@ -71,6 +78,28 @@ in-memory model and services every DAP stepping request by moving a cursor.
 Because the whole recording is in memory, stepping *backward* is just as cheap
 as stepping forward. The adapter runs in-process in the extension host
 (`DebugAdapterInlineImplementation`).
+
+```mermaid
+flowchart TB
+    subgraph build["Build (LiveBackend)"]
+      CRATE["contract crate"] -->|"CARGO_PROFILE_RELEASE_DEBUG=true<br/>STRIP=none, OPT_LEVEL=0"| WASM["wasm + DWARF<br/>(pristine linker output)"]
+    end
+    WASM --> KOMET["komet-node<br/>executes the whole transaction"]
+    KOMET --> TRACE["entire trace<br/>one record per wasm instruction"]
+
+    subgraph model["In-memory model — vscode-free"]
+      TRACE --> VAL["validate positions<br/>vs static disassembly"]
+      WASM -. "DWARF" .-> MAP["map code offset → Rust file:line"]
+      VAL --> CUR["cursor machine<br/>(forward == backward cost)"]
+      MAP --> CUR
+    end
+
+    CUR -->|"each DAP request<br/>just moves the cursor"| DAP["SorobanDebugSession<br/>StoppedEvents / frames / disassembly"]
+```
+
+A `rawTrace` replay skips the *Build* and *komet-node* stages entirely — the
+JSONL trace is loaded straight into the model (and a paired `wasmPath` still
+feeds the DWARF/disassembly seams).
 
 - **The build injects debug info without touching your `Cargo.toml`.** It sets
   `CARGO_PROFILE_RELEASE_DEBUG=true` / `CARGO_PROFILE_RELEASE_STRIP=none` for

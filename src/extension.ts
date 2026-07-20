@@ -11,9 +11,8 @@
 
 import * as vscode from 'vscode';
 import { SorobanDebugSession } from './debugAdapter/SorobanDebugSession';
-import { RawTraceBackend } from './debugAdapter/backends/RawTraceBackend';
-import { LiveBackend } from './debugAdapter/backends/LiveBackend';
-import { SessionBackend, SorobanLaunchArgs } from './debugAdapter/types';
+import { backendFor } from './debugAdapter/backendFor';
+import { SorobanLaunchArgs } from './debugAdapter/types';
 
 export function activate(context: vscode.ExtensionContext): void {
   const provider = new SorobanConfigurationProvider();
@@ -26,14 +25,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
 export function deactivate(): void {
   // No global resources to release; sessions clean up on disconnect.
-}
-
-/** Selects a backend per launch configuration. */
-function backendFor(config: SorobanLaunchArgs): SessionBackend {
-  if (config.rawTrace) {
-    return new RawTraceBackend();
-  }
-  return new LiveBackend();
 }
 
 class SorobanAdapterFactory implements vscode.DebugAdapterDescriptorFactory {

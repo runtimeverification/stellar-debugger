@@ -1,5 +1,13 @@
 # Stepping semantics
 
+> **Audience:** `contributor` · `maintainer` (replay/stepping engine)
+>
+> **TL;DR:** The precise contract for how the cursor moves through a recorded
+> trace — statement vs. instruction granularity, forward and backward. Defines
+> the per-record model (visible/mapped/depth/run) and the numbered rules
+> (S1–S20) that the test suite pins, plus the opt-level build prerequisite and
+> the fixtures behind each rule.
+
 The contract between the debugger's replay engine and the user's expectations
 when stepping through a recorded trace — at **statement** (Rust source) and
 **instruction** (Disassembly View) granularity, forward and backward. The
@@ -53,6 +61,20 @@ ever come to rest on a stop point of the active granularity — never on an
 invisible record, and (at statement granularity) never on an unmapped or
 filtered-out one, except when filtering would leave the trace (or a function
 frame) with no stop point at all.
+
+The two granularities are successive filters over the same trace — each stop set
+is a subset of the one above it:
+
+```mermaid
+flowchart TB
+    ALL["all trace records"] -->|"drop invisible records<br/>(pos fails validation)"| VIS["visible records<br/>= instruction stop points"]
+    VIS -->|"group into line runs;<br/>keep each run's first index"| RS["run starts<br/>one per line execution (incl. per loop iteration)"]
+    RS -->|"S17 drop declaration lines<br/>S18 drop non-epilogue braces"| SS["statement stops<br/>= where source stepping rests"]
+```
+
+Instruction stepping visits the middle box; statement stepping visits the
+bottom box. Filtering never empties a frame (see S17/S18): if it would remove
+every stop, the unfiltered run starts stand.
 
 ## Rules
 
