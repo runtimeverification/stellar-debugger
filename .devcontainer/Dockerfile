@@ -36,6 +36,15 @@ RUN curl -sSL \
     | tar xz -C /usr/local/bin stellar \
   && stellar --version
 
+# --- GitHub CLI (prebuilt) -------------------------------------------------
+# Used by `scripts/dev.sh pr` to open coordinated PRs across the semantics chain.
+ARG GH_CLI_VERSION=2.63.2
+RUN curl -sSL \
+      "https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}/gh_${GH_CLI_VERSION}_linux_amd64.tar.gz" \
+    | tar xz -C /usr/local --strip-components=1 \
+        "gh_${GH_CLI_VERSION}_linux_amd64/bin/gh" \
+  && gh --version
+
 # --- Nix prep --------------------------------------------------------------
 # Single-user Nix is installed under /nix as the `node` user (no systemd in the
 # container). Pre-create /nix with node ownership so the installer can write it.

@@ -84,10 +84,19 @@ pinned_version() {
   grep -oE "${2}@v[0-9.]+" "$1" 2>/dev/null | head -1 | grep -oE '[0-9.]+$' || true
 }
 
-# Append a [tool.uv.sources] block to <pyproject> pointing deps at local
-# checkouts. Idempotent (keyed on the sentinel); refuses to clobber a hand-written
-# [tool.uv.sources]. Usage: inject_sources <pyproject> "<name>=<rel-path>" ...
-inject_sources() {
+# The version <repo> is pinned at by its immediate downstream (empty if unknown).
+pinned_for() {
+  case "$1" in
+    komet)          pinned_version "$CHAIN_DIR/komet-node/pyproject.toml" 'komet\.git' ;;
+    wasm-semantics) pinned_version "$CHAIN_DIR/komet/pyproject.toml" 'wasm-semantics\.git' ;;
+  esac
+}
+
+# Write a generated [tool.uv.sources] block into <pyproject>. Each remaining arg
+# is "<name>=<inline-toml-table>", e.g. 'komet={ path = "../komet", editable = true }'.
+# Idempotent (keyed on the sentinel); refuses to clobber a hand-written block. An
+# empty arg list leaves an empty, override-free block (deps fall back to their pins).
+write_uv_sources() {
   local file="$1"; shift
   [[ -f "$file" ]] || die "no pyproject.toml at $file"
   if grep -qF "$SENTINEL_OPEN" "$file"; then
@@ -100,11 +109,21 @@ inject_sources() {
   {
     printf '\n%s\n[tool.uv.sources]\n' "$SENTINEL_OPEN"
     local pair
-    for pair in "$@"; do
-      printf '%s = { path = "%s", editable = true }\n' "${pair%%=*}" "${pair#*=}"
-    done
+    for pair in "$@"; do printf '%s = %s\n' "${pair%%=*}" "${pair#*=}"; done
     printf '%s\n' "$SENTINEL_CLOSE"
   } >> "$file"
+}
+
+# Wire deps at local checkouts via editable PATH sources — the fast-loop wiring
+# (`build`/`shell` run uv against the real filesystem, so out-of-tree paths are
+# fine). Usage: inject_sources <pyproject> "<name>=<rel-path>" ...
+inject_sources() {
+  local file="$1"; shift
+  local -a specs=(); local pair
+  for pair in "$@"; do
+    specs+=("${pair%%=*}={ path = \"${pair#*=}\", editable = true }")
+  done
+  write_uv_sources "$file" "${specs[@]}"
   log "wired path sources into ${file#"$REPO_ROOT"/}"
 }
 
@@ -165,11 +184,52 @@ cmd_shell() {
   nix develop --extra-experimental-features 'nix-command flakes' "$(dir_of komet-node)"
 }
 
+# `use` builds komet-node with a real `nix build` (release parity), which copies
+# ONLY the flake dir into the Nix store — so it cannot consume the editable PATH
+# sources the fast loop uses (`../komet` escapes the store, "do not know how to
+# unpack …/source/../komet"). So for `use` we point komet-node at any locally-
+# *changed* chain repo via a git file:// source at its committed HEAD — the exact
+# git -> uv2nix -> nix pipeline a real release uses — and drop the override for
+# unchanged repos (they build from their upstream pins). nix git-fetch sees only
+# committed history, so changes must be committed first. The fast-loop path
+# sources are restored afterwards so `build` stays instant.
 cmd_use() {
   [[ -d "$(dir_of komet-node)" ]] || die "run 'setup' first"
-  need kup
+  need kup; need git
+
+  local -a git_specs=()
+  local repo dir head pintag
+  for repo in komet wasm-semantics; do
+    dir="$(dir_of "$repo")"; [[ -d "$dir/.git" ]] || continue
+    head="$(git -C "$dir" rev-parse HEAD)"
+    pintag="v$(pinned_for "$repo")"
+    # Unchanged (still exactly on the pinned tag) -> keep the upstream pin.
+    if git -C "$dir" rev-parse -q --verify "$pintag^{commit}" >/dev/null 2>&1 \
+       && [[ "$(git -C "$dir" rev-parse "$pintag^{commit}")" == "$head" ]]; then
+      continue
+    fi
+    # Changed -> must be committed; nix builds from committed history only. Ignore
+    # the generated pyproject/uv.lock churn when judging "uncommitted".
+    if git -C "$dir" status --porcelain -- . ':!pyproject.toml' ':!uv.lock' | grep -q .; then
+      die "$repo has uncommitted changes — commit them before 'use' (nix builds from committed history). See: git -C '$dir' status"
+    fi
+    case "$repo" in
+      komet)          git_specs+=("komet={ git = \"file://$dir\", rev = \"$head\" }") ;;
+      wasm-semantics) git_specs+=("pykwasm={ git = \"file://$dir\", rev = \"$head\", subdirectory = \"pykwasm\" }") ;;
+    esac
+    log "$repo: local build -> git file:// @ ${head:0:7}"
+  done
+  [[ ${#git_specs[@]} -gt 0 ]] || warn "no local changes vs pins — 'use' will rebuild the pinned release."
+
   log "installing local komet-node onto PATH via kup (exact release build)…"
-  kup install komet-node --version "$(dir_of komet-node)"
+  # Swap the fast-loop path sources for git sources nix can build, re-lock, build.
+  write_uv_sources "$CHAIN_DIR/komet-node/pyproject.toml" "${git_specs[@]}"
+  local rc=0
+  { in_devshell 'uv lock' && kup install komet-node --version "$(dir_of komet-node)"; } || rc=$?
+  # Always restore the editable path sources so the fast loop keeps working.
+  inject_sources "$CHAIN_DIR/komet-node/pyproject.toml" "komet=../komet" "pykwasm=../wasm-semantics/pykwasm"
+  in_devshell 'uv lock' >/dev/null 2>&1 || true
+  [[ $rc -eq 0 ]] || die "use failed (see above); restored fast-loop path sources."
   log "done — the debugger's default 'komet-node' is now your local build."
   log "revert with: kup install komet-node"
 }
