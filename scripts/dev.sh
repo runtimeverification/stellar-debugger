@@ -234,14 +234,74 @@ cmd_use() {
   log "revert with: kup install komet-node"
 }
 
+# Current local branch of <repo>, or "detached@<tag|sha>" when not on a branch
+# (the normal pinned state sits detached at a version tag).
+current_branch() {
+  local dir; dir="$(dir_of "$1")"
+  local b; b="$(git -C "$dir" symbolic-ref --short -q HEAD || true)"
+  if [[ -n "$b" ]]; then printf '%s' "$b"; return; fi
+  local t; t="$(git -C "$dir" describe --tags --exact-match 2>/dev/null || true)"
+  printf 'detached@%s' "${t:-$(git -C "$dir" rev-parse --short HEAD)}"
+}
+
+# Working-tree state of <repo>, ignoring the generated uv wiring churn (dev.sh
+# rewrites the root pyproject.toml + uv.lock, so those are never "real" edits).
+worktree_state() {
+  local dir; dir="$(dir_of "$1")"
+  local porcelain; porcelain="$(git -C "$dir" status --porcelain)"
+  [[ -z "$porcelain" ]] && { printf 'clean'; return; }
+  local real; real="$(printf '%s\n' "$porcelain" | grep -vE ' (pyproject\.toml|uv\.lock)$' || true)"
+  [[ -z "$real" ]] && { printf 'clean (only generated wiring)'; return; }
+  printf '%s uncommitted change(s)' "$(printf '%s\n' "$real" | grep -c .)"
+}
+
+# Whether <repo>'s current branch exists on origin, and how it relates to HEAD.
+# Uses ls-remote (network) so it reflects the real remote, not a stale tracking ref.
+remote_state() {
+  local repo="$1" branch="$2" dir; dir="$(dir_of "$repo")"
+  [[ "$branch" == detached@* ]] && { printf 'n/a (detached)'; return; }
+  local remote_sha
+  remote_sha="$(GIT_TERMINAL_PROMPT=0 git -C "$dir" ls-remote --heads origin "$branch" 2>/dev/null | cut -f1)"
+  [[ -z "$remote_sha" ]] && { printf 'not pushed'; return; }
+  local local_sha; local_sha="$(git -C "$dir" rev-parse HEAD)"
+  if [[ "$remote_sha" == "$local_sha" ]]; then printf 'pushed (up to date)'
+  elif git -C "$dir" merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then printf 'pushed (local ahead — push again)'
+  else printf 'pushed (diverged)'; fi
+}
+
+# Open-PR / merged state of <repo>'s branch on GitHub. Needs gh + jq; one PR line
+# answers both "is there an open PR?" (OPEN) and "merged into the default branch?"
+# (MERGED) since a branch has at most one live PR to its base.
+pr_state() {
+  local repo="$1" branch="$2"
+  [[ "$branch" == detached@* ]] && { printf 'n/a (detached)'; return; }
+  command -v gh >/dev/null 2>&1 || { printf 'unknown (gh not installed)'; return; }
+  command -v jq >/dev/null 2>&1 || { printf 'unknown (jq not installed)'; return; }
+  local json
+  json="$(gh pr list --repo "runtimeverification/$repo" --head "$branch" \
+            --state all --limit 1 --json number,state,url 2>/dev/null)" \
+    || { printf 'unknown (gh error / not authenticated)'; return; }
+  [[ -z "$json" || "$json" == "[]" ]] && { printf 'none'; return; }
+  printf '#%s %s — %s' \
+    "$(printf '%s' "$json" | jq -r '.[0].number')" \
+    "$(printf '%s' "$json" | jq -r '.[0].state')" \
+    "$(printf '%s' "$json" | jq -r '.[0].url')"
+}
+
 cmd_status() {
+  local repo dir branch
   for repo in "${CHAIN_ORDER[@]}"; do
-    local dir; dir="$(dir_of "$repo")"
-    if [[ -d "$dir/.git" ]]; then
-      printf '  %-16s %s\n' "$repo" "$(git -C "$dir" log -1 --format='%h %s' 2>/dev/null)"
-    else
-      printf '  %-16s (not checked out)\n' "$repo"
+    dir="$(dir_of "$repo")"
+    if [[ ! -d "$dir/.git" ]]; then
+      printf '\n  \033[1m%s\033[0m\n    (not checked out)\n' "$repo"
+      continue
     fi
+    branch="$(current_branch "$repo")"
+    printf '\n  \033[1m%s\033[0m  %s\n' "$repo" "$(git -C "$dir" log -1 --format='%h %s' 2>/dev/null)"
+    printf '    branch    %s\n' "$branch"
+    printf '    worktree  %s\n' "$(worktree_state "$repo")"
+    printf '    remote    %s\n' "$(remote_state "$repo" "$branch")"
+    printf '    PR        %s\n' "$(pr_state "$repo" "$branch")"
   done
 }
 
@@ -368,7 +428,7 @@ already has komet-node (via kup) — just press F5.
   build           fast incremental rebuild after an edit
   shell           drop into the komet-node dev shell
   use             install the local build as the debugger's komet-node
-  status          show checked-out revisions
+  status          per-repo: branch, worktree, push state, and PR/merge state
 
   pr status <branch>            show which repos would open a PR
   pr open   <branch> [--draft] [--dry-run] [--title T] [--body B]
