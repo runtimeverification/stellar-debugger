@@ -46,6 +46,52 @@ extension loaded and the [`examples/`](examples/) workspace open. Pick a
 configuration from the Run and Debug view — the **Replay … with symbols**
 configs need no toolchain at all.
 
+## Changing the semantics (komet / wasm-semantics)
+
+The debugger consumes an upstream chain,
+`komet-node → komet → wasm-semantics`, but you rarely touch it. Pick your mode:
+
+**1. Just debugging (almost always).** Do nothing special — the devcontainer
+already has the `komet-node` binary (from `kup`). Press **F5**. You never need
+nix, uv, or any of the tooling below.
+
+**2. Changing the semantics and seeing it in the debugger.** Use the single
+front-end [`scripts/dev.sh`](scripts/dev.sh):
+
+```bash
+./scripts/dev.sh setup   # check out the chain into .deps/ and wire it up
+# …edit .deps/wasm-semantics or .deps/komet…
+./scripts/dev.sh build   # fast incremental rebuild
+./scripts/dev.sh use     # make it the debugger's komet-node, then press F5
+```
+
+**3. Upstreaming the change as PRs.** Once you have commits on a shared branch in
+the checkouts, `dev.sh pr open <branch>` opens a cross-linked PR in each
+repo (`pr status <branch>` / `--dry-run` to preview first).
+
+That's the whole developer surface. Everything else is plumbing the script drives
+for you:
+
+- You never run `nix`, `uv`, or `kdist` by hand — `setup`/`build` do.
+- **`.deps/`** (leading dot) is generated and gitignored — throwaway local
+  checkouts; delete it any time to reset. Not to be confused with the committed
+  `deps/` folders in komet/komet-node, which hold version pins (below).
+- This repo carries **no version-pin files**. The pins that connect the chain
+  (`deps/*_release`, `uv.lock`, flake inputs) live upstream in komet/komet-node
+  and are bumped by CI, not by you.
+
+<details><summary>Why it needs checkouts (background)</summary>
+
+The chain is pinned by **uv git dependencies**, not Nix flake inputs, so
+`kup --override` can't reach `komet`/`wasm-semantics`. `setup` therefore checks
+the repos out side-by-side (at the versions currently pinned, or `--tip` for
+latest) and wires them with uv **path sources** so an edit flows up the chain
+with no version bumps. `build`/`shell` are the fast inner loop (`kdist` caches
+per target, toolchain from komet-node's Nix dev shell); `use` does one Nix
+realize so the debugger gets the exact release build — doubling as a parity
+check. Revert with `kup install komet-node`.
+</details>
+
 ## Testing conventions
 
 - **Write tests first.** New behavior should arrive with a failing test that
