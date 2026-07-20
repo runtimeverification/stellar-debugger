@@ -1,5 +1,5 @@
 /**
- * Trace-acquisition backend selector (docs/interfaces.md, "backendFor").
+ * Trace-acquisition backend selector (docs/trace-cli-internal.md, "backendFor").
  *
  * Picks the vscode-free backend from the launch args: `args.rawTrace` present →
  * RawTraceBackend (offline JSONL replay), else LiveBackend (the full

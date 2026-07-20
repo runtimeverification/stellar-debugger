@@ -1,5 +1,5 @@
 /**
- * Unit suite for the shared headless stop model (docs/interfaces.md, "Shared
+ * Unit suite for the shared headless stop model (docs/trace-cli-internal.md, "Shared
  * headless core"). Two pure, vscode-free functions in
  * src/debugAdapter/stopModel.ts are the single source of truth the CLI and the
  * DAP session both build on, so they can never disagree about where a "stop" is:
@@ -33,7 +33,7 @@ async function resolveFixture(name: string): Promise<ResolvedTrace> {
   return new RawTraceBackend().resolve(args as any, () => {});
 }
 
-describe('buildStopModel (docs/interfaces.md, shared headless core)', () => {
+describe('buildStopModel (docs/trace-cli-internal.md, shared headless core)', () => {
   describe('adder-debug fixture', () => {
     let resolved: ResolvedTrace;
 
@@ -83,7 +83,7 @@ describe('buildStopModel (docs/interfaces.md, shared headless core)', () => {
   });
 });
 
-describe('pcAtIndex (docs/interfaces.md, current-PC rule)', () => {
+describe('pcAtIndex (docs/trace-cli-internal.md, current-PC rule)', () => {
   it('returns the validated code offset at the index (adder idx 29 → 45)', async () => {
     const resolved = await resolveFixture('adder-debug');
     assert.strictEqual(pcAtIndex(resolved.positions, 29), 45);

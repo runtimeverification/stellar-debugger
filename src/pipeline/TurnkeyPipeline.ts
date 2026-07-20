@@ -89,11 +89,7 @@ export class TurnkeyPipeline {
     const result = await client.getTransaction(sent.hash);
     if (result.status === 'FAILED') {
       throw new Error(
-        `Invocation of ${args.function}(...) failed on komet-node (status FAILED, tx ${sent.hash}). ` +
-          `Note: the current komet-node only completes contract calls that return no value — ` +
-          `its callTx handling asserts a Void result, so any function returning a value gets ` +
-          `stuck and the transaction is reported FAILED. Try a function that returns () / no value, ` +
-          `or update komet-node.`,
+        `Invocation of ${args.function}(...) failed on komet-node (status FAILED, tx ${sent.hash}).`,
       );
     }
 

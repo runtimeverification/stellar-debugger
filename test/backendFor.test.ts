@@ -1,5 +1,5 @@
 /**
- * Unit suite for the trace-acquisition backend selector (docs/interfaces.md,
+ * Unit suite for the trace-acquisition backend selector (docs/trace-cli-internal.md,
  * "backendFor"). backendFor(args) picks the vscode-free backend from the launch
  * args, reused by the extension, the TCP server, and the CLI:
  *
@@ -15,7 +15,7 @@ import { backendFor } from '../src/debugAdapter/backendFor';
 import { RawTraceBackend } from '../src/debugAdapter/backends/RawTraceBackend';
 import { LiveBackend } from '../src/debugAdapter/backends/LiveBackend';
 
-describe('backendFor (docs/interfaces.md, backend selection)', () => {
+describe('backendFor (docs/trace-cli-internal.md, backend selection)', () => {
   it('selects RawTraceBackend when rawTrace is present', () => {
     const backend = backendFor({ rawTrace: 'x.jsonl' } as any);
     assert.ok(

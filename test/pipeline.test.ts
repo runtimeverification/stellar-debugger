@@ -91,7 +91,20 @@ describe('TurnkeyPipeline (against mock komet-node)', () => {
     await mock.stop();
     mock = new MockKometNode({ trace, traceStatus: 'FAILED' });
     port = await mock.start();
-    await assert.rejects(() => run(), /FAILED/);
+    await assert.rejects(
+      () => run(),
+      (err: Error) => {
+        // Still flags the FAILED status and identifies the invocation...
+        assert.match(err.message, /FAILED/);
+        assert.match(err.message, /add/);
+        // ...and pins the invocation to its transaction hash (mock's hashFor
+        // yields a 64-char hex hash, so this stays non-brittle).
+        assert.match(err.message, /tx [0-9a-f]{64}/);
+        // ...but no longer parrots the (now-fixed) value-return limitation.
+        assert.doesNotMatch(err.message, /no value|Void|update komet-node|stuck/i);
+        return true;
+      },
+    );
   });
 });
 

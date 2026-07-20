@@ -1,6 +1,6 @@
 /**
  * Unit suite for the serializable single-stop projection
- * (docs/interfaces.md, "projectSourceStop"). The module under test does not
+ * (docs/trace-cli-internal.md, "projectSourceStop"). The module under test does not
  * exist yet — this is the red anchor for it.
  *
  *   projectSourceStop(resolved, stopModel, index, opts): SourceStop
@@ -10,7 +10,7 @@
  * functionNameAt, makeRuntimeState + variablesInScope + decodeVariable) and,
  * unlike the DAP handlers, expands DecodedValue.children EAGERLY into plain
  * arrays bounded by a per-stop depth/child budget. Values are pinned to the
- * verified ground-truth fixtures (docs/interfaces.md ground-truth table).
+ * verified ground-truth fixtures (docs/trace-cli-internal.md ground-truth table).
  */
 
 import * as assert from 'assert';
@@ -31,7 +31,7 @@ async function resolveFixture(name: string): Promise<ResolvedTrace> {
   return new RawTraceBackend().resolve(args as any, () => {});
 }
 
-describe('projectSourceStop (docs/interfaces.md, serializable stop projection)', () => {
+describe('projectSourceStop (docs/trace-cli-internal.md, serializable stop projection)', () => {
   describe('adder-debug idx 29 (the sole statement stop)', () => {
     let resolved: ResolvedTrace;
 

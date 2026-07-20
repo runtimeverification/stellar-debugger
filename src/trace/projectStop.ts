@@ -1,5 +1,5 @@
 /**
- * A serializable projection of one trace stop (docs/interfaces.md,
+ * A serializable projection of one trace stop (docs/trace-cli-internal.md,
  * "projectSourceStop"). Unlike the DAP handlers — whose lazy `Handles` /
  * child-thunk machinery is deliberately different — this reuses only the
  * low-level resolver calls and expands `DecodedValue.children` EAGERLY into

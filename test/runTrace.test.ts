@@ -1,6 +1,6 @@
 /**
  * Unit suite for the one-shot CLI trace projection
- * (docs/interfaces.md, "Interface 1 — one-shot CLI"). The module under test
+ * (docs/trace-cli-internal.md, "Interface 1 — one-shot CLI"). The module under test
  * does not exist yet — this is the red anchor for it.
  *
  *   runCliTrace(resolved, opts): string[]  from src/trace/runTrace.ts
@@ -31,7 +31,7 @@ async function resolveFixture(name: string): Promise<ResolvedTrace> {
   return new RawTraceBackend().resolve(args as any, () => {});
 }
 
-describe('runCliTrace (docs/interfaces.md, one-shot CLI JSONL)', () => {
+describe('runCliTrace (docs/trace-cli-internal.md, one-shot CLI JSONL)', () => {
   describe('adder-debug (records=41, runStarts=[29])', () => {
     let resolved: ResolvedTrace;
 

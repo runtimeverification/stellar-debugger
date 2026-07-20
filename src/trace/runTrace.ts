@@ -1,5 +1,5 @@
 /**
- * The one-shot CLI trace projection (docs/interfaces.md, "Interface 1").
+ * The one-shot CLI trace projection (docs/trace-cli-internal.md, "Interface 1").
  *
  * `runCliTrace` walks `stopModel.runStarts` in order — provably the same
  * sequence a user sees stepping in (statement-granularity stepIn visits

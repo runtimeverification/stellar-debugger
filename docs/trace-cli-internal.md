@@ -1,16 +1,16 @@
-# Debugger interfaces
+# `soroban-trace` internals
 
 > **Audience:** `contributor` · `maintainer` · `integrator` (internals)
 >
-> **TL;DR:** The internal design behind the three ways to consume the adapter
-> (VS Code inline, TCP DAP server, one-shot CLI) and the `vscode`-free shared
-> core they all sit on. Documents the `SourceStop`/`TraceVar` JSONL schema and
-> the ground-truth fixtures. For *user*-facing usage of the standalone tools,
-> see [`standalone-interfaces.md`](./standalone-interfaces.md).
+> **TL;DR:** How `soroban-trace` turns a resolved trace into Rust-source-level
+> JSONL, and the `vscode`-free shared core it sits on (also used by the DAP
+> server — see [`dap-cli-internal.md`](./dap-cli-internal.md)). Documents the
+> `SourceStop`/`TraceVar` schema and the ground-truth fixtures. User-facing
+> usage is in [`trace-cli.md`](./trace-cli.md).
 
-The trace-replay debug adapter (`SorobanDebugSession`) can be consumed three ways.
-All three share one headless, `vscode`-free core; none of them touch the DAP
-stepping engine (S1–S20, see [`stepping.md`](./stepping.md)).
+The CLI is a pure pipeline over the same replay engine the VS Code extension
+uses; it never touches the DAP stepping engine (S1–S20, see
+[`stepping.md`](./stepping.md)). It needs no `SorobanDebugSession` at all:
 
 ```mermaid
 flowchart TB
@@ -21,33 +21,23 @@ flowchart TB
     LB --> RT
 
     subgraph core["shared headless core — vscode-free"]
-        BSM["buildStopModel → StopModel<br/>single source of truth for stop points"]
+        BSM["buildStopModel → StopModel"]
         PCA["pcAtIndex"]
         PSS["projectSourceStop<br/>serializable, eager var expansion"]
     end
 
     RT --> BSM
     PCA --> PSS
-
-    BSM --> SDS["SorobanDebugSession<br/>DAP handlers + stepping engine"]
-    PCA --> SDS
-    BSM --> RCT["runCliTrace"]
+    BSM -->|"runStarts"| RCT["runCliTrace"]
     PSS --> RCT
-
-    subgraph ifaces["interfaces"]
-        VSC["VS Code inline"]
-        DAP["soroban-dap<br/>standalone TCP DAP server"]
-        CLI["soroban-trace<br/>one-shot JSONL trace"]
-    end
-
-    SDS --> VSC
-    SDS --> DAP
-    RCT --> CLI
+    RCT --> OUT["kind-tagged JSONL<br/>meta · stop · result"]
 ```
 
 ## Shared headless core
 
 All modules below are pure (no `vscode`, no DAP wire I/O) and unit-testable.
+`backendFor`, `buildStopModel`, and `pcAtIndex` are also used by the DAP server
+(see [`dap-cli-internal.md`](./dap-cli-internal.md)).
 
 ### `backendFor(args): SessionBackend` — `src/debugAdapter/backendFor.ts`
 
@@ -132,12 +122,11 @@ interface TraceVar {
 }
 ```
 
-## Interface 1 — one-shot CLI (`soroban-trace`) — `src/trace/main.ts` + `runTrace.ts`
+## `runCliTrace(resolved, opts): string[]` — `src/trace/runTrace.ts`
 
-`runCliTrace(resolved, opts): string[]` (pure, in `src/trace/runTrace.ts`) walks
-`stopModel.runStarts` in order — provably the same sequence a user sees stepping in
-(statement-granularity `stepIn` visits `runStarts[0..n]` then terminates per S20) — and
-emits kind-tagged JSONL:
+`runCliTrace` (pure) walks `stopModel.runStarts` in order — provably the same sequence a
+user sees stepping in (statement-granularity `stepIn` visits `runStarts[0..n]` then
+terminates per S20) — and emits kind-tagged JSONL:
 
 ```jsonl
 {"kind":"meta","function":"add","wasm":"…","records":41,"stops":1,"hasDwarf":true}
@@ -145,37 +134,15 @@ emits kind-tagged JSONL:
 {"kind":"result","returnValue":"…","terminated":true}
 ```
 
-If `stopModel.runStarts` is empty (no DWARF / no source), the CLI errors rather than
-silently emitting `visibleIndices` as if they were source statements (an explicit
-`--allow-no-source` opt-in may relax this to instruction-level stops later).
+If `stopModel.runStarts` is empty (no DWARF / no source), it throws rather than
+silently emitting `visibleIndices` as if they were source statements (the CLI's
+`--allow-no-source` opt-in relaxes this).
 
-`src/trace/main.ts` is a thin, coverage-excluded entry: parse argv, build launch args,
-`backendFor(args).resolve(...)`, `runCliTrace`, write to stdout or `--out`, then
-`backend.dispose()`. Flags: `--raw-trace <jsonl>` `--wasm <wasm>` (offline, the default
-path); or live `--contract <dir> --function <name> [--args-json '[…]']`; plus `--out`,
-`--depth`, `--max-children`.
-
-## Interface 2 — standalone TCP DAP server (`soroban-dap`) — `src/server/dapServer.ts`
-
-`startDapServer({host?, port}): Promise<{port, close}>` opens a `net.createServer`; for
-each connection it creates `new SorobanDebugSession(backendFor)` (the selector overload)
-and pipes `session.start(socket, socket)`. On socket close it calls `session.shutdown()`
-so `disconnectRequest → backend.dispose()` runs and a `LiveBackend` komet-node process is
-not leaked. This is DAP's canonical "server mode": any DAP client connects to the port
-(VS Code `"debugServer": <port>`, nvim-dap, IntelliJ, Emacs dap-mode). `src/server/main.ts`
-is the thin, coverage-excluded entry that parses `--host`/`--port` and logs the address.
-
-Plain request/response HTTP is intentionally not offered: DAP is a bidirectional,
-event-driven protocol (async `stopped`/`output`/`terminated` events) that does not fit
-HTTP's request/response shape. WebSocket could be added later for browser-fronted clients.
-
-## Session constructor change
-
-`SorobanDebugSession` now accepts **either** a concrete `SessionBackend` (unchanged;
-used by the extension and the stdio test harness) **or** a selector
-`(args: SorobanLaunchArgs) => SessionBackend`, resolved on the first line of
-`launchRequest` (the backend is unused before then). The TCP server passes the selector
-so the backend can depend on the per-connection launch config.
+`src/trace/main.ts` is a thin, coverage-excluded entry: it delegates argv parsing to the
+pure `parseTraceArgs` (`src/trace/cliArgs.ts`, unit-tested), then
+`backendFor(args).resolve(...)`, `runCliTrace`, writes to stdout or `--out`, and
+`backend.dispose()`. Help goes to stdout (exit 0); a usage error goes to stderr (exit 2);
+a runtime failure exits 1.
 
 ## Ground-truth fixtures (verified)
 

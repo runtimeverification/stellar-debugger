@@ -1,5 +1,5 @@
 /**
- * The shared headless stop model (docs/interfaces.md, "Shared headless core").
+ * The shared headless stop model (docs/trace-cli-internal.md, "Shared headless core").
  *
  * `buildStopModel` is the single source of truth for a trace's stop points, so
  * the IDE (SorobanDebugSession) and the CLI can never disagree about where a

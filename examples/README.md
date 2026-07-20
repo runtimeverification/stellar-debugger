@@ -88,6 +88,20 @@ Once the nix cache ships the fix, delete that setting and the extension will use
 `komet-node` from `$PATH`. (The `soroban.stellar.path` setting works the same way
 for the Stellar CLI.)
 
+The standalone `trace.js` CLI does **not** read the VS Code settings — it always
+spawns `komet-node` from `$PATH`. In this devcontainer that is still the stale
+build, so a value-returning live call (`add`, `increment`) hangs until the RPC
+times out. To use the rebuilt node, put it ahead of the stale one on `$PATH`:
+
+```sh
+PATH=/home/node/.komet-node/bin:$PATH \
+node ../../dist/trace.js --contract . --function add \
+  --args-json '[{"value":1,"type":"u32"},{"value":2,"type":"u32"}]' \
+  --out trace.jsonl
+```
+
+Once the fix is on `$PATH`, the `PATH` prefix can be dropped.
+
 ## Adding your own contract
 
 Drop a new crate directory here (with a `Cargo.toml` exposing a `#[contract]`),

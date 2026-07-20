@@ -3,7 +3,7 @@ import * as path from 'path';
 import { DebugClient } from '@vscode/debugadapter-testsupport';
 import { DebugProtocol } from '@vscode/debugprotocol';
 // src/server/dapServer.ts does not exist yet — this import is what makes the
-// suite fail to compile/run until M2's TCP server lands (docs/interfaces.md,
+// suite fail to compile/run until M2's TCP server lands (docs/dap-cli-internal.md,
 // "Interface 2 — standalone TCP DAP server").
 import { startDapServer } from '../src/server/dapServer';
 import { RawTraceBackend } from '../src/debugAdapter/backends/RawTraceBackend';

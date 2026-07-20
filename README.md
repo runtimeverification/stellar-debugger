@@ -96,10 +96,12 @@ Two settings let you point at executables that aren't on your `PATH`:
 
 ### Beyond the editor
 
-The debugger is also available outside VS Code — as a one-shot CLI that prints a
-Rust-level execution trace as JSONL (for scripts, CI, and AI agents), and as a
-standalone DAP server over TCP (for other editors). See
-[**docs/standalone-interfaces.md**](docs/standalone-interfaces.md).
+The debugger is also available outside VS Code:
+
+- [**`soroban-trace`**](docs/trace-cli.md) — a one-shot CLI that prints a
+  Rust-level execution trace as JSONL, for scripts, CI, and AI agents.
+- [**`soroban-dap`**](docs/dap-cli.md) — the debug adapter served over TCP, so other
+  editors (nvim-dap, IntelliJ, Emacs) can drive it.
 
 ## Contributing
 

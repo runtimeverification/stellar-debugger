@@ -1,28 +1,31 @@
 /**
  * Thin CLI entry for the standalone TCP DAP server (`soroban-dap`).
  *
- * Parses `--host`/`--port` (default 4711) from argv, starts the server, and
- * logs the listening address to stderr. Coverage-excluded: the real logic lives
- * in `dapServer.ts`, exercised end-to-end by the integration test.
+ * Parses argv (via `parseServerArgs`), then dispatches: show help (stdout, exit
+ * 0), report a usage error (stderr, exit 2), or start the server and log the
+ * listening address to stderr. Coverage-excluded: the real logic lives in
+ * `cliArgs.ts` / `dapServer.ts`, exercised directly by tests.
  */
 
+import { parseServerArgs } from './cliArgs';
 import { startDapServer } from './dapServer';
 
-/** Read the value following a flag, or undefined when absent. */
-function flag(argv: string[], name: string): string | undefined {
-  const i = argv.indexOf(name);
-  return i >= 0 && i + 1 < argv.length ? argv[i + 1] : undefined;
-}
-
 async function main(): Promise<void> {
-  const argv = process.argv.slice(2);
-  const host = flag(argv, '--host');
-  const portFlag = flag(argv, '--port');
-  const port = portFlag !== undefined ? Number(portFlag) : 4711;
+  const p = parseServerArgs(process.argv.slice(2));
 
-  const srv = await startDapServer({ host, port });
+  if (p.kind === 'help') {
+    process.stdout.write(p.text + '\n');
+    return;
+  }
+  if (p.kind === 'error') {
+    process.stderr.write(p.message + '\n');
+    process.exitCode = 2;
+    return;
+  }
+
+  const srv = await startDapServer({ host: p.host, port: p.port });
   process.stderr.write(
-    `Soroban DAP server listening on ${host ?? '127.0.0.1'}:${srv.port}\n`,
+    `Soroban DAP server listening on ${p.host ?? '127.0.0.1'}:${srv.port}\n`,
   );
 }
 

@@ -1,5 +1,5 @@
 /**
- * Standalone TCP DAP server (`soroban-dap`) — docs/interfaces.md, "Interface 2".
+ * Standalone TCP DAP server (`soroban-dap`) — docs/dap-cli-internal.md, "Interface 2".
  *
  * Opens a `net.createServer`; for each connection it creates a fresh
  * `SorobanDebugSession(backendFor)` (the selector overload, so the backend can
@@ -37,7 +37,7 @@ export async function startDapServer(
     const session = new SorobanDebugSession(select);
     // Server mode: a dropped connection must tear down only this session, never
     // the shared server process. Without this, DebugSession.shutdown() calls
-    // process.exit(0) 100ms after any socket closes (docs/interfaces.md,
+    // process.exit(0) 100ms after any socket closes (docs/dap-cli-internal.md,
     // "DAP's canonical server mode").
     session.setRunAsServer(true);
     session.start(socket, socket);
