@@ -68,40 +68,6 @@ Note: komet-node's tracer stops at instructions it cannot decode (it reports
 them as `unknown`, e.g. `if`), so a trace can end before the invocation does —
 depending on codegen, some contracts replay only partially.
 
-## komet-node version note
-
-Earlier versions of komet-node reported a `FAILED` transaction for any contract
-call that **returns a value** (its `callTx` handling asserted a `Void` result, so
-functions like `add`/`increment` got stuck; only no-return functions like
-`greeter::store` completed). This is fixed in komet-node — `callTx` now uses
-`uncheckedCallTx`, which does not assert the return value.
-
-The fix isn't on the nix binary cache yet, so the `komet-node` on `$PATH` in this
-devcontainer is still the older build. `.vscode/settings.json` therefore points
-the extension at the rebuilt node via:
-
-```json
-{ "soroban.kometNode.path": "/home/node/.komet-node/bin/komet-node" }
-```
-
-Once the nix cache ships the fix, delete that setting and the extension will use
-`komet-node` from `$PATH`. (The `soroban.stellar.path` setting works the same way
-for the Stellar CLI.)
-
-The standalone `trace.js` CLI does **not** read the VS Code settings — it always
-spawns `komet-node` from `$PATH`. In this devcontainer that is still the stale
-build, so a value-returning live call (`add`, `increment`) hangs until the RPC
-times out. To use the rebuilt node, put it ahead of the stale one on `$PATH`:
-
-```sh
-PATH=/home/node/.komet-node/bin:$PATH \
-node ../../dist/trace.js --contract . --function add \
-  --args-json '[{"value":1,"type":"u32"},{"value":2,"type":"u32"}]' \
-  --out trace.jsonl
-```
-
-Once the fix is on `$PATH`, the `PATH` prefix can be dropped.
-
 ## Adding your own contract
 
 Drop a new crate directory here (with a `Cargo.toml` exposing a `#[contract]`),

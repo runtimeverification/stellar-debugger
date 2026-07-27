@@ -96,13 +96,6 @@ crates to try: `examples/increment --function increment`,
 `examples/stepper --function sum_triples`, `examples/greeter --function store`
 (see [`examples/README.md`](../examples/README.md) for each contract's shape).
 
-> **komet-node in this devcontainer:** the `komet-node` on `$PATH` here is a
-> stale build that hangs on value-returning calls (`add`, `increment`). Prefix
-> the rebuilt node — `PATH=/home/node/.komet-node/bin:$PATH node dist/trace.js …`
-> — until the fix lands on `$PATH`. See
-> [`examples/README.md`](../examples/README.md#komet-node-version-note) for the
-> full note.
-
 ## Offline replay (a recorded run, no toolchain)
 
 Already have a recorded `komet-node` trace? Replay it with no build and no
