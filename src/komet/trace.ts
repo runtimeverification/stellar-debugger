@@ -185,6 +185,16 @@ export class TraceParseError extends Error {
 }
 
 /**
+ * Validate an array of already-parsed JSON record values into TraceRecords.
+ * This is the shape komet-node's `traceTransaction` RPC returns directly — a
+ * JSON array of records, one per executed instruction or Soroban VM event;
+ * `parseTraceJsonl` is the equivalent for a bare JSONL string (file replay).
+ */
+export function toTraceRecords(values: readonly unknown[]): TraceRecord[] {
+  return values.map((value, i) => toTraceRecord(value, i + 1));
+}
+
+/**
  * Parse a JSONL trace string into records. Blank lines are skipped. Each
  * non-blank line must be a valid JSON object matching the record contract.
  */

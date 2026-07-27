@@ -65,6 +65,32 @@ describe('TurnkeyPipeline (against mock komet-node)', () => {
     assert.strictEqual(mock.calls('traceTransaction'), 1);
   });
 
+  it('replays an array trace with interleaved Soroban VM events', async () => {
+    // komet-node interleaves VM events (callContract/hostCall/endWasm, pos null,
+    // no stack) among the instruction records and returns the whole thing as a
+    // JSON array. Guard that shape through the full pipeline here so a regression
+    // is caught even when the real-node e2e can't run (no binary installed).
+    await mock.stop();
+    const eventTrace = [
+      '{"pos":null,"instr":["callContract"],"from":{},"to":{},"function":"add","args":[],"depth":1,"storage":[]}',
+      '{"pos":3,"instr":["const","i32",1],"stack":[],"locals":{}}',
+      '{"pos":null,"instr":["hostCall","l","_"],"locals":{"0":["i64",1]}}',
+      '{"pos":5,"instr":["return"],"stack":[["u32",11]],"locals":{}}',
+      '{"pos":null,"instr":["endWasm"],"success":true,"depth":1,"result":{"type":"u32","value":11}}',
+    ].join('\n');
+    mock = new MockKometNode({ trace: eventTrace });
+    port = await mock.start();
+
+    const resolved = await run();
+
+    assert.strictEqual(resolved.model.length, 5);
+    const ops = resolved.model.records.map((r) => r.instr[0]);
+    assert.ok(
+      ops.includes('callContract') && ops.includes('endWasm'),
+      `expected the VM events to survive parsing, got ${ops.join(', ')}`,
+    );
+  });
+
   it('uploads the actual wasm bytes', async () => {
     await run();
     const uploadEnv = mock.envelopes('sendTransaction')[1];

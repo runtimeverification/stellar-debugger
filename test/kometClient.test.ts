@@ -122,25 +122,32 @@ describe('KometClient', () => {
     });
   });
 
-  it('returns the trace string from traceTransaction', async () => {
-    server = new StubServer(ok('{"pos":0}\n{"pos":1}'));
+  it('returns the record array from a JSON-array trace (current komet-node)', async () => {
+    server = new StubServer(ok([{ pos: 0 }, { pos: 1 }]));
     const port = await server.start();
     const client = new KometClient({ host: '127.0.0.1', port });
-    assert.strictEqual(await client.traceTransaction('h'), '{"pos":0}\n{"pos":1}');
+    assert.deepStrictEqual(await client.traceTransaction('h'), [{ pos: 0 }, { pos: 1 }]);
   });
 
-  it('rejects an empty trace from traceTransaction', async () => {
-    server = new StubServer(ok('   '));
+  it('rejects an empty-array trace from traceTransaction', async () => {
+    server = new StubServer(ok([]));
     const port = await server.start();
     const client = new KometClient({ host: '127.0.0.1', port });
     await assert.rejects(() => client.traceTransaction('h'), /no trace/);
   });
 
-  it('rejects a non-string trace from traceTransaction', async () => {
+  it('rejects a null trace (unknown hash) from traceTransaction', async () => {
+    server = new StubServer(ok(null));
+    const port = await server.start();
+    const client = new KometClient({ host: '127.0.0.1', port });
+    await assert.rejects(() => client.traceTransaction('h'), /no trace/);
+  });
+
+  it('rejects an unexpected trace result type from traceTransaction', async () => {
     server = new StubServer(ok(42));
     const port = await server.start();
     const client = new KometClient({ host: '127.0.0.1', port });
-    await assert.rejects(() => client.traceTransaction('h'), /no trace/);
+    await assert.rejects(() => client.traceTransaction('h'), /unexpected result/);
   });
 
   it('waitForHealthy resolves once the node reports healthy', async () => {

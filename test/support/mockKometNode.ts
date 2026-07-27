@@ -5,8 +5,9 @@
  * getTransaction, traceTransaction).
  *
  * Mirrors the live protocol: transactions are submitted via sendTransaction
- * (which returns a hash), traceTransaction({hash}) returns the canned JSONL
- * trace as a bare string, and getTransaction({hash}) reports the status.
+ * (which returns a hash), traceTransaction({hash}) returns the canned trace as
+ * a JSON array of record objects (as komet-node does), and getTransaction({hash})
+ * reports the status.
  */
 
 import * as http from 'http';
@@ -14,7 +15,7 @@ import { AddressInfo } from 'net';
 import { Networks } from '@stellar/stellar-sdk';
 
 export interface MockOptions {
-  /** JSONL trace returned by traceTransaction. */
+  /** JSONL trace fixture; served by traceTransaction as a JSON record array. */
   trace: string;
   /** Override the transaction status reported by getTransaction. */
   traceStatus?: string;
@@ -85,8 +86,14 @@ export class MockKometNode {
         return { hash, status: 'PENDING', latestLedger: String(this.ledger) };
       }
       case 'traceTransaction':
-        // The live node returns the JSONL trace as a bare string, keyed by hash.
-        return this.opts.trace;
+        // The live node returns the trace as a JSON array of record objects,
+        // keyed by hash. The fixture is authored as JSONL, so split it into the
+        // array shape the real node emits.
+        return this.opts.trace
+          .split('\n')
+          .map((line) => line.trim())
+          .filter((line) => line !== '')
+          .map((line) => JSON.parse(line));
       case 'getTransaction':
         return {
           status: this.opts.traceStatus ?? 'SUCCESS',
