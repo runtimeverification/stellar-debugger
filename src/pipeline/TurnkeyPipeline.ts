@@ -18,7 +18,7 @@ import { KometProcess } from '../komet/KometProcess';
 import { ContractBuilder } from '../build/ContractBuilder';
 import { SorobanTxBuilder } from '../soroban/SorobanTxBuilder';
 import { encodeArgs } from '../soroban/scval';
-import { parseTraceJsonl } from '../komet/trace';
+import { toTraceRecords } from '../komet/trace';
 import { stripDebugSections } from '../wasm/sections';
 import { promises as fs } from 'fs';
 import { TraceModel } from '../debugAdapter/TraceModel';
@@ -79,8 +79,9 @@ export class TurnkeyPipeline {
     await client.sendTransaction(create.envelopeXdr);
 
     // 6. Invoke, then fetch its trace by hash. The node submits the envelope
-    // (sendTransaction) and exposes the per-instruction trace separately via
-    // traceTransaction(hash); the final status comes from getTransaction(hash).
+    // (sendTransaction) and exposes the trace (a JSON array of per-instruction
+    // and Soroban VM-event records) separately via traceTransaction(hash); the
+    // final status comes from getTransaction(hash).
     const scvalArgs = encodeArgs(args.args);
     report(`Invoking ${args.function}(${(args.args ?? []).map((a) => JSON.stringify(a.value)).join(', ')}) with trace ...`);
     const invokeXdr = txBuilder.buildInvoke(source, create.contractId, args.function, scvalArgs);
@@ -95,9 +96,10 @@ export class TurnkeyPipeline {
 
     const trace = await client.traceTransaction(sent.hash);
 
-    // 7. Parse trace into the replay model; the uploaded wasm supplies the
-    // disassembly and (when built with debug info) the DWARF source mapping.
-    const records = parseTraceJsonl(trace);
+    // 7. Validate the trace records into the replay model; the uploaded wasm
+    // supplies the disassembly and (when built with debug info) the DWARF
+    // source mapping.
+    const records = toTraceRecords(trace);
     const model = new TraceModel(records);
     const { source: sourceMapper, variables, disassembly, positions } = buildDebugArtifacts(wasm, model, report);
 

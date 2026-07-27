@@ -8,10 +8,10 @@
  *
  * A transaction is submitted as a base64 XDR TransactionEnvelope via
  * `sendTransaction`, which returns its hash. The execution trace is then
- * fetched by hash: `traceTransaction({hash})` returns the JSONL trace as a
- * bare string (one JSON record per executed wasm instruction). The final
- * SUCCESS/FAILED status comes from `getTransaction({hash})` — the trace result
- * itself carries no status. (Verified against komet-node installed via
+ * fetched by hash: `traceTransaction({hash})` returns a JSON array of records
+ * (one per executed wasm instruction or interleaved Soroban VM event). The
+ * final SUCCESS/FAILED status comes from `getTransaction({hash})` — the trace
+ * result itself carries no status. (Verified against komet-node installed via
  * `kup install komet-node`.)
  *
  * Pure module (uses global fetch, no `vscode` imports) so it can be tested
@@ -122,20 +122,28 @@ export class KometClient {
   }
 
   /**
-   * Fetch the JSONL execution trace for an already-submitted transaction.
-   * Returns the trace as a bare newline-separated string (one JSON record per
-   * executed wasm instruction). Throws if the node returns no trace for the
-   * hash (e.g. the transaction was not a contract invocation).
+   * Fetch the execution trace for an already-submitted transaction, as an array
+   * of raw JSON trace-record values — one per executed wasm instruction or
+   * interleaved Soroban VM event. komet-node returns `null` when it has no
+   * trace for the hash and an empty array when the transaction ran no
+   * instructions; both throw here (e.g. the transaction was not a contract
+   * invocation), as does any non-array result.
    */
-  async traceTransaction(hash: string): Promise<string> {
-    const trace = await this.call<string>('traceTransaction', { hash });
-    if (typeof trace !== 'string' || trace.trim() === '') {
+  async traceTransaction(hash: string): Promise<unknown[]> {
+    const result = await this.call<unknown>('traceTransaction', { hash });
+    if (result != null && !Array.isArray(result)) {
+      throw new KometRpcError(
+        `traceTransaction returned an unexpected result type (${typeof result}); expected a JSON array.`,
+      );
+    }
+    const records = Array.isArray(result) ? result : [];
+    if (records.length === 0) {
       throw new KometRpcError(
         `traceTransaction returned no trace for ${hash}. ` +
           'Was the transaction a contract invocation?',
       );
     }
-    return trace;
+    return records;
   }
 
   /** Poll getHealth until healthy or the deadline passes. */

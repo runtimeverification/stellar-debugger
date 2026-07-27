@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { parseTraceJsonl, toTraceRecord, TraceParseError, opcode } from '../src/komet/trace';
+import { parseTraceJsonl, toTraceRecord, toTraceRecords, TraceParseError, opcode } from '../src/komet/trace';
 
 describe('trace parsing', () => {
   it('parses a well-formed JSONL trace', () => {
@@ -40,6 +40,30 @@ describe('trace parsing', () => {
   it('reports the line number on invalid JSON', () => {
     assert.throws(
       () => parseTraceJsonl('{"pos":1,"instr":["nop"]}\nnot json\n'),
+      /trace line 2/,
+    );
+  });
+
+  // komet-node's `traceTransaction` returns the trace as a JSON ARRAY of record
+  // objects (not a JSONL string); toTraceRecords validates that array shape.
+  it('validates an array of already-parsed record objects', () => {
+    const records = toTraceRecords([
+      { pos: 3, instr: ['const', 'i32', 1048576], stack: [], locals: {} },
+      // An interleaved Soroban VM event (pos null, no stack/locals) is accepted.
+      { pos: null, instr: ['callContract'], from: {}, to: {}, function: 'add', args: [] },
+    ]);
+    assert.strictEqual(records.length, 2);
+    assert.strictEqual(records[0].pos, 3);
+    assert.strictEqual(opcode(records[1]), 'callContract');
+  });
+
+  it('toTraceRecords accepts an empty array', () => {
+    assert.deepStrictEqual(toTraceRecords([]), []);
+  });
+
+  it('toTraceRecords reports the offending element index on a malformed record', () => {
+    assert.throws(
+      () => toTraceRecords([{ pos: 1, instr: ['nop'] }, { pos: 'x', instr: ['nop'] }]),
       /trace line 2/,
     );
   });

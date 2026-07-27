@@ -39,7 +39,37 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Test with coverage gate
+      # The end-to-end tests (test/integration.node.test.ts) run the REAL
+      # komet-node — the only way to catch a breaking change in its RPC or trace
+      # format. Install it the same way the devcontainer does: Nix + RV's binary
+      # caches + `kup install komet-node` (prebuilt, no from-source kdist build).
+      - name: Install Nix
+        env:
+          NIX_CONFIG: experimental-features = nix-command flakes
+        run: |
+          curl -L https://nixos.org/nix/install | sh -s -- --no-daemon --yes
+          echo "$HOME/.nix-profile/bin:$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # APPEND (not overwrite) RV's binary caches AFTER the installer wrote its
+      # own /etc/nix/nix.conf — matching .devcontainer/Dockerfile. Writing this
+      # before the install would let the installer clobber it, and kup would then
+      # miss the cache and build the K semantics from source (minutes, timeout).
+      - name: Register RV binary caches
+        run: |
+          sudo mkdir -p /etc/nix
+          printf '%s\n' \
+            'trusted-users = root runner' \
+            'extra-substituters = https://k-framework.cachix.org https://k-framework-binary.cachix.org' \
+            'extra-trusted-public-keys = k-framework.cachix.org-1:jeyMXB2h28gpNRjuVkehg+zLj62ma1RnyyopA/20yFE= k-framework-binary.cachix.org-1:pJedQ8iG19BW3v/DMMmiRVtwRBGO3fyMv2Ws0OpBADs=' \
+            | sudo tee -a /etc/nix/nix.conf
+
+      - name: Install komet-node
+        run: |
+          curl -L https://kframework.org/install | bash
+          kup install komet-node
+          timeout 60 komet-node --help >/dev/null
+
+      - name: Test with coverage gate (includes real komet-node e2e)
         run: npm run coverage:ci
 
   mutation:
