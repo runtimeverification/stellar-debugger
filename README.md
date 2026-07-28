@@ -51,8 +51,32 @@ at all — so you can see the debugger working in seconds. See
 
 ## Usage
 
-Add a `soroban` configuration to your `.vscode/launch.json`. The common case is:
-build a contract, run a function on a local network, and debug the result.
+Add a `soroban` configuration to your `.vscode/launch.json`. A configuration describes an ordered sequence of transactions run against one fresh local ledger, and names which transaction to trace and debug — the last one by default. This lets you set up whatever state the call under test depends on (deploy other contracts, run a constructor, seed storage) before the transaction you actually want to step through.
+
+```jsonc
+{
+  "type": "soroban",
+  "request": "launch",
+  "name": "Debug supply",
+  "transactions": [
+    // deploy: build a crate dir (or point `wasm` at a prebuilt .wasm) and
+    // register it under a handle `id` that later invokes reference.
+    { "kind": "deploy", "id": "pool", "contract": "${workspaceFolder}" },
+
+    // invoke: call a function on a deployed handle. `args` is an object keyed
+    // by the function's parameter names.
+    { "kind": "invoke", "contract": "pool", "function": "__constructor",
+      "args": { "admin": "${sourceAddress}" } },
+    { "kind": "invoke", "contract": "pool", "function": "supply",
+      "args": { "requests": [[{ "tag": "Native" }, "1000"]] } }
+  ],
+  "trace": "last"
+}
+```
+
+Set a breakpoint in your contract's Rust source, start the configuration, and step through the traced transaction — forward or backward.
+
+For the common case of a single call you can skip `transactions` and write the invoke inline; the debugger deploys the contract and invokes it for you:
 
 ```jsonc
 {
@@ -61,31 +85,48 @@ build a contract, run a function on a local network, and debug the result.
   "name": "Debug add(1, 2)",
   "contract": "${workspaceFolder}",   // crate dir containing Cargo.toml
   "function": "add",
-  "args": [
-    { "value": 1, "type": "u32" },
-    { "value": 2, "type": "u32" }
-  ]
+  "args": { "a": 1, "b": 2 }
 }
 ```
 
-Set a breakpoint in your contract's Rust source, start the configuration, and
-step through — forward or backward.
-
 ### Configuration reference
+
+Top-level attributes:
 
 | Attribute | Description |
 |-----------|-------------|
-| `function` *(required)* | Name of the contract function to invoke and debug. |
-| `args` | Function arguments, each `{ "value": …, "type": "u32" \| "i128" \| "symbol" \| "address" \| … }`. |
-| `contract` | Path to the contract crate directory (with `Cargo.toml`). Defaults to `${workspaceFolder}`. |
-| `wasmPath` | Path to a prebuilt `.wasm`. Overrides building from `contract`. |
-| `debugInfo` | Build with debug info for Rust source mapping (default `true`; set `false` to debug at the wasm level only). |
-| `rawTrace` | Replay a previously recorded run from a file instead of building and deploying. |
+| `transactions` | Ordered array of `deploy` / `invoke` steps (see below). Mutually exclusive with the top-level `function` shorthand. |
+| `trace` | Which transaction feeds the debug session: `"last"` (default), a 0-based index into `transactions`, or a step `id` (a deploy's `id` or an invoke's optional `id`). |
+| `sourceSecret` | Source account secret (`S…`) used to sign every transaction. A deterministic account is derived if omitted. Its address is available in `args` as `${sourceAddress}`. |
 | `node` | Local-network connection/spawn settings: `attach`, `host`, `port`, `command`, `ioDir`. |
-| `sourceSecret` | Optional source account secret (`S…`). A fresh account is used if omitted. |
+| `rawTrace` | Replay a previously recorded run from a file instead of building and deploying. |
 
-Two settings let you point at executables that aren't on your `PATH`:
-`soroban.stellar.path` and `soroban.kometNode.path`.
+A **`deploy`** step uploads a contract and registers a handle:
+
+| Field | Description |
+|-------|-------------|
+| `kind` *(required)* | `"deploy"`. |
+| `id` *(required)* | Handle name that later `invoke` steps reference via their `contract` field, and that `trace` can select. |
+| `contract` | Path to the contract crate directory (with `Cargo.toml`) to build. |
+| `wasm` | Path to a prebuilt `.wasm`. Overrides building from `contract`; one of `contract` / `wasm` is required. |
+| `buildCommand` | Command used to build a `contract` dir (default `stellar contract build`). |
+| `debugInfo` | Build with debug info for Rust source mapping (default `true`; set `false` to debug at the wasm level only). |
+
+An **`invoke`** step calls a function on a deployed handle:
+
+| Field | Description |
+|-------|-------------|
+| `kind` *(required)* | `"invoke"`. |
+| `contract` *(required)* | Handle `id` of an earlier `deploy` step. |
+| `function` *(required)* | Name of the contract function to call. |
+| `args` | Arguments, as an object keyed by the function's parameter names. Values follow the contract's own spec, so composites work: an enum is `{ "tag": "Native" }` or `{ "tag": "Other", "values": [7] }`, a tuple or vec is a JSON array, an `i128` is a decimal string, an address is a `G…`/`C…` string. |
+| `id` | Optional label so `trace` can select this invoke's transaction. |
+
+Two substitution tokens are expanded inside string `args` values: `${sourceAddress}` (the source account's address) and `${contract:<id>}` (the deployed address behind a handle).
+
+The single-call shorthand accepts the same fields inline: `function`, `args`, and a contract source (`contract` or `wasmPath`), plus `buildCommand` / `debugInfo`. `args` there also accepts the positional form `[{ "type": "u32", "value": 1 }, …]`.
+
+Two settings let you point at executables that aren't on your `PATH`: `soroban.stellar.path` and `soroban.kometNode.path`.
 
 ### Beyond the editor
 
