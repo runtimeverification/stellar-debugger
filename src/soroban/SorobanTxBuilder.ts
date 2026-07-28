@@ -40,9 +40,17 @@ export interface CreateContractResult {
 export class SorobanTxBuilder {
   constructor(private readonly networkPassphrase: string) {}
 
-  /** A fresh TransactionBuilder; sequence is irrelevant to komet-node. */
-  private newBuilder(source: Keypair): TransactionBuilder {
-    const account = new Account(source.publicKey(), '0');
+  /**
+   * A fresh TransactionBuilder. komet-node ignores sequence numbers for
+   * EXECUTION, but the sequence is part of the signed envelope, so two
+   * otherwise-identical transactions built with the SAME sequence hash to the
+   * same bytes and komet-node dedups the second (returns the first's cached
+   * receipt without re-executing). The sequence runner therefore assigns a
+   * DISTINCT, incrementing sequence per submitted tx so every envelope hashes
+   * uniquely. The default of `'0'` preserves the historical single-tx behavior.
+   */
+  private newBuilder(source: Keypair, sequence: string | number = '0'): TransactionBuilder {
+    const account = new Account(source.publicKey(), String(sequence));
     return new TransactionBuilder(account, {
       fee: BASE_FEE,
       networkPassphrase: this.networkPassphrase,
@@ -64,8 +72,8 @@ export class SorobanTxBuilder {
    * CreateAccount must already exist. If so, a pre-seeded state fixture is
    * needed instead.
    */
-  buildCreateAccount(account: Keypair, startingBalance = '100000000'): string {
-    const builder = this.newBuilder(account).addOperation(
+  buildCreateAccount(account: Keypair, startingBalance = '100000000', sequence: string | number = '0'): string {
+    const builder = this.newBuilder(account, sequence).addOperation(
       Operation.createAccount({
         destination: account.publicKey(),
         startingBalance,
@@ -75,16 +83,16 @@ export class SorobanTxBuilder {
   }
 
   /** Upload contract wasm; returns the envelope and the wasm hash. */
-  buildUploadWasm(source: Keypair, wasm: Buffer): UploadResult {
-    const builder = this.newBuilder(source).addOperation(
+  buildUploadWasm(source: Keypair, wasm: Buffer, sequence: string | number = '0'): UploadResult {
+    const builder = this.newBuilder(source, sequence).addOperation(
       Operation.uploadContractWasm({ wasm }),
     );
     return { envelopeXdr: this.finish(builder, source), wasmHash: hash(wasm) };
   }
 
   /** Create a contract instance from an uploaded wasm hash. */
-  buildCreateContract(source: Keypair, wasmHash: Buffer, salt: Buffer): CreateContractResult {
-    const builder = this.newBuilder(source).addOperation(
+  buildCreateContract(source: Keypair, wasmHash: Buffer, salt: Buffer, sequence: string | number = '0'): CreateContractResult {
+    const builder = this.newBuilder(source, sequence).addOperation(
       Operation.createCustomContract({
         address: addressFromPublicKey(source.publicKey()),
         wasmHash,
@@ -96,9 +104,9 @@ export class SorobanTxBuilder {
   }
 
   /** Invoke a contract function with the given ScVal arguments. */
-  buildInvoke(source: Keypair, contractId: string, fn: string, args: xdr.ScVal[]): string {
+  buildInvoke(source: Keypair, contractId: string, fn: string, args: xdr.ScVal[], sequence: string | number = '0'): string {
     const contract = new Contract(contractId);
-    const builder = this.newBuilder(source).addOperation(contract.call(fn, ...args));
+    const builder = this.newBuilder(source, sequence).addOperation(contract.call(fn, ...args));
     return this.finish(builder, source);
   }
 }

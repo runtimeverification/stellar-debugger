@@ -10,4 +10,5 @@ reports/
 state.kore
 .claude/
 test/fixtures/sample-contract/target/
+test/fixtures/*/target/
 examples/*/target/

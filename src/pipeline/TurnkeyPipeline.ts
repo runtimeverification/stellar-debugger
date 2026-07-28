@@ -1,29 +1,28 @@
 /**
- * The turnkey pipeline: from contract source to a replayable trace, in one go.
+ * The turnkey pipeline: from a launch configuration to a replayable trace, in
+ * one go.
  *
- *   build wasm -> (spawn + health-check komet-node) -> seed account ->
- *   upload wasm -> create contract -> invoke-with-trace -> parse trace.
+ *   (spawn + health-check komet-node) -> normalizeConfig -> SequenceRunner.run
  *
- * In `attach` mode the build and spawn steps are skipped and the pipeline talks
- * to an already-running node.
+ * Both the legacy single-invoke config (`function` + `args` + `wasmPath`/
+ * `contract`) and the new `transactions` sequence config flow through this one
+ * path: `normalizeConfig` (M1) folds either shape into a canonical
+ * `{ steps, trace }`, and the `SequenceRunner` (M3) executes it against one
+ * accumulating komet-node ledger, never throwing on a FAILED tx and fetching
+ * the traced step's trace regardless of status.
+ *
+ * In `attach` mode the spawn step is skipped and the pipeline talks to an
+ * already-running node.
  *
  * Pure module (no `vscode` imports) so it can be driven against a mock node in
  * tests and against a real komet-node in integration.
  */
 
-import { randomBytes } from 'crypto';
-import { Keypair } from '@stellar/stellar-sdk';
 import { KometClient } from '../komet/KometClient';
 import { KometProcess } from '../komet/KometProcess';
-import { ContractBuilder } from '../build/ContractBuilder';
-import { SorobanTxBuilder } from '../soroban/SorobanTxBuilder';
-import { encodeArgs } from '../soroban/scval';
-import { toTraceRecords } from '../komet/trace';
-import { stripDebugSections } from '../wasm/sections';
-import { promises as fs } from 'fs';
-import { TraceModel } from '../debugAdapter/TraceModel';
-import { buildDebugArtifacts } from '../debugAdapter/artifacts';
 import { ProgressReporter, ResolvedTrace, SorobanLaunchArgs } from '../debugAdapter/types';
+import { normalizeConfig, RawLaunchConfig } from './config';
+import { SequenceRunner } from './SequenceRunner';
 
 const HEALTH_TIMEOUT_MS = 60_000;
 
@@ -35,8 +34,9 @@ export class TurnkeyPipeline {
     const host = args.node?.host ?? 'localhost';
     const port = args.node?.port ?? 8000;
 
-    // 1. Build (or locate) the contract wasm.
-    const wasm = await this.loadWasm(args, report);
+    // 1. Normalize the launch config (legacy OR new `transactions`) into a
+    // canonical `{ steps, trace }`. This also validates it before we spawn.
+    const normalized = normalizeConfig(args as RawLaunchConfig);
 
     // 2. Spawn komet-node unless attaching to a running one.
     if (!attach) {
@@ -53,57 +53,10 @@ export class TurnkeyPipeline {
     report(`Waiting for komet-node at ${client.url} ...`);
     await client.waitForHealthy(HEALTH_TIMEOUT_MS);
 
-    const network = await client.getNetwork();
-    const passphrase = network.passphrase;
-    const txBuilder = new SorobanTxBuilder(passphrase);
-
-    // 3. Source account.
-    const source = args.sourceSecret ? Keypair.fromSecret(args.sourceSecret) : Keypair.random();
-    report(`Source account: ${source.publicKey()}`);
-    report('Seeding source account (CreateAccount) ...');
-    await client.sendTransaction(txBuilder.buildCreateAccount(source));
-
-    // 4. Upload wasm. komet-node only executes the code; the DWARF custom
-    // sections just bloat the KORE config it re-parses per RPC call, so strip
-    // them for the upload. The code section stays byte-identical, keeping trace
-    // `pos` aligned with the full `wasm` the adapter uses for debug artifacts.
-    const uploadWasm = stripDebugSections(wasm);
-    report(`Uploading contract wasm (${wasm.length} bytes, ${uploadWasm.length} after stripping debug sections) ...`);
-    const upload = txBuilder.buildUploadWasm(source, Buffer.from(uploadWasm));
-    await client.sendTransaction(upload.envelopeXdr);
-
-    // 5. Create contract.
-    const salt = randomBytes(32);
-    const create = txBuilder.buildCreateContract(source, upload.wasmHash, salt);
-    report(`Creating contract ${create.contractId} ...`);
-    await client.sendTransaction(create.envelopeXdr);
-
-    // 6. Invoke, then fetch its trace by hash. The node submits the envelope
-    // (sendTransaction) and exposes the trace (a JSON array of per-instruction
-    // and Soroban VM-event records) separately via traceTransaction(hash); the
-    // final status comes from getTransaction(hash).
-    const scvalArgs = encodeArgs(args.args);
-    report(`Invoking ${args.function}(${(args.args ?? []).map((a) => JSON.stringify(a.value)).join(', ')}) with trace ...`);
-    const invokeXdr = txBuilder.buildInvoke(source, create.contractId, args.function, scvalArgs);
-    const sent = await client.sendTransaction(invokeXdr);
-
-    const result = await client.getTransaction(sent.hash);
-    if (result.status === 'FAILED') {
-      throw new Error(
-        `Invocation of ${args.function}(...) failed on komet-node (status FAILED, tx ${sent.hash}).`,
-      );
-    }
-
-    const trace = await client.traceTransaction(sent.hash);
-
-    // 7. Validate the trace records into the replay model; the uploaded wasm
-    // supplies the disassembly and (when built with debug info) the DWARF
-    // source mapping.
-    const records = toTraceRecords(trace);
-    const model = new TraceModel(records);
-    const { source: sourceMapper, variables, disassembly, positions } = buildDebugArtifacts(wasm, model, report);
-
-    return { model, source: sourceMapper, variables, disassembly, positions };
+    // 3. Execute the whole sequence and resolve the traced tx into a replayable
+    // trace. The runner seeds the source account, deploys, invokes, and fetches
+    // the traced step's trace regardless of status.
+    return new SequenceRunner(client).run(normalized, { sourceSecret: args.sourceSecret }, report);
   }
 
   async dispose(): Promise<void> {
@@ -111,19 +64,5 @@ export class TurnkeyPipeline {
       await this.process.stop();
       this.process = undefined;
     }
-  }
-
-  private async loadWasm(args: SorobanLaunchArgs, report: ProgressReporter): Promise<Buffer> {
-    const builder = new ContractBuilder();
-    const wasmPath = await builder.build(
-      {
-        contractDir: args.contract ?? process.cwd(),
-        buildCommand: args.buildCommand,
-        wasmPath: args.wasmPath,
-        debugInfo: args.debugInfo,
-      },
-      report,
-    );
-    return fs.readFile(wasmPath);
   }
 }

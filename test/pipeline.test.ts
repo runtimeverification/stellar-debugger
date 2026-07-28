@@ -113,24 +113,26 @@ describe('TurnkeyPipeline (against mock komet-node)', () => {
     assert.deepStrictEqual(args, [5, 6]);
   });
 
-  it('surfaces a FAILED invocation as an error', async () => {
+  it('keeps a FAILED invocation debuggable: no throw, trace still fetched', async () => {
+    // A reverting tx must stay debuggable: TurnkeyPipeline (via SequenceRunner)
+    // NEVER throws on a FAILED status and fetches the traced step's trace
+    // regardless of status (see the module doc and the M3 no-throw test).
     await mock.stop();
     mock = new MockKometNode({ trace, traceStatus: 'FAILED' });
     port = await mock.start();
-    await assert.rejects(
-      () => run(),
-      (err: Error) => {
-        // Still flags the FAILED status and identifies the invocation...
-        assert.match(err.message, /FAILED/);
-        assert.match(err.message, /add/);
-        // ...and pins the invocation to its transaction hash (mock's hashFor
-        // yields a 64-char hex hash, so this stays non-brittle).
-        assert.match(err.message, /tx [0-9a-f]{64}/);
-        // ...but no longer parrots the (now-fixed) value-return limitation.
-        assert.doesNotMatch(err.message, /no value|Void|update komet-node|stuck/i);
-        return true;
-      },
-    );
+
+    let resolved;
+    await assert.doesNotReject(async () => {
+      resolved = await run();
+    });
+
+    // The whole sequence still ran (four submissions) ...
+    assert.strictEqual(mock.envelopes('sendTransaction').length, 4);
+    // ... and the traced step's trace was fetched despite the FAILED status,
+    // parsed into a replayable model.
+    assert.strictEqual(mock.calls('traceTransaction'), 1);
+    assert.ok(resolved!.model.length > 0);
+    assert.strictEqual(resolved!.model.length, trace.trim().split('\n').length);
   });
 });
 
