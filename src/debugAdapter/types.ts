@@ -10,30 +10,22 @@ import { TraceModel } from './TraceModel';
 import { SourceMapper } from '../sourcemap/SourceMapper';
 import { VariableResolver } from '../sourcemap/VariableResolver';
 import { Disassembly } from '../wasm/Disassembly';
-import { ScValArg } from '../soroban/scval';
+import { TxStep, TraceSelector } from '../pipeline/config';
 
 /** Attributes of a `soroban` launch configuration (mirrors package.json). */
 export interface SorobanLaunchArgs extends DebugProtocol.LaunchRequestArguments {
-  /** Path to the contract crate (containing Cargo.toml). */
-  contract?: string;
   /**
-   * Path to a prebuilt .wasm (overrides building from `contract`). Also used
-   * with `rawTrace` for offline symbol-rich replay: the wasm supplies the
-   * disassembly and DWARF source mapping for a canned trace.
+   * The ordered transaction sequence (deploy / invoke steps) to run. Build
+   * options and function/args live on the individual steps.
+   */
+  transactions?: TxStep[];
+  /** Selects which submitted transaction feeds the debug session. */
+  trace?: TraceSelector;
+  /**
+   * REPLAY mode only: the `.wasm` supplying disassembly + DWARF source mapping
+   * for a canned `rawTrace`, enabling offline symbol-rich replay.
    */
   wasmPath?: string;
-  /** Build command used to produce the wasm. */
-  buildCommand?: string;
-  /**
-   * Build the contract with DWARF debug info (default true): injects the
-   * cargo profile overrides that keep line tables in the wasm, enabling Rust
-   * source mapping. Set false to build untouched and debug at the wasm level.
-   */
-  debugInfo?: boolean;
-  /** Function to invoke. */
-  function: string;
-  /** Declarative function arguments. */
-  args?: ScValArg[];
   /** komet-node connection / spawn settings. */
   node?: {
     attach?: boolean;

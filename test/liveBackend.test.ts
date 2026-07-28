@@ -3,6 +3,7 @@ import { promises as fs } from 'fs';
 import * as path from 'path';
 import { Keypair } from '@stellar/stellar-sdk';
 import { LiveBackend } from '../src/debugAdapter/backends/LiveBackend';
+import { SorobanLaunchArgs } from '../src/debugAdapter/types';
 import { MockKometNode } from './support/mockKometNode';
 
 const FIXTURES = path.join(__dirname, '..', '..', 'test', 'fixtures');
@@ -35,15 +36,21 @@ describe('LiveBackend (against mock komet-node)', () => {
     const backend = new LiveBackend();
     const resolved = await backend.resolve(
       {
-        wasmPath: WASM,
-        function: 'add',
-        args: [
-          { value: 5, type: 'u32' },
-          { value: 6, type: 'u32' },
+        transactions: [
+          { kind: 'deploy', id: 'c', wasm: WASM },
+          {
+            kind: 'invoke',
+            contract: 'c',
+            function: 'add',
+            args: [
+              { value: 5, type: 'u32' },
+              { value: 6, type: 'u32' },
+            ],
+          },
         ],
         sourceSecret: FIXED_SECRET,
         node: { attach: true, host: '127.0.0.1', port },
-      },
+      } as unknown as SorobanLaunchArgs,
       () => undefined,
     );
 

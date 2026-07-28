@@ -29,7 +29,9 @@ describe('backendFor (docs/trace-cli-internal.md, backend selection)', () => {
   });
 
   it('selects LiveBackend when there is no rawTrace', () => {
-    const backend = backendFor({ function: 'add' } as any);
+    const backend = backendFor({
+      transactions: [{ kind: 'deploy', id: 'c', wasm: 'x.wasm' }],
+    } as any);
     assert.ok(
       backend instanceof LiveBackend,
       'expected a LiveBackend for a live (no rawTrace) launch',

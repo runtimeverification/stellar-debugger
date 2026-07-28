@@ -2,16 +2,12 @@
  * Normalization of a `soroban` launch configuration into a canonical,
  * ordered transaction sequence.
  *
- * The debugger accepts two config flavors:
+ * A launch config carries an explicit `transactions` array (deploy / invoke
+ * steps) plus a `trace` selector naming which submitted tx feeds the session.
  *
- *   - the NEW schema: an explicit `transactions` array (deploy / invoke steps)
- *     plus a `trace` selector naming which submitted tx feeds the session;
- *   - the LEGACY single-invoke schema: a top-level `function` + `args` with a
- *     `wasmPath`/`contract` source, implicitly "deploy then invoke".
- *
- * `normalizeConfig` folds BOTH into one canonical `{ steps, trace }` shape:
- * an ordered `TxStep[]` and a `trace` RESOLVED to a 0-based index into it.
- * It validates handle references, deploy-id uniqueness and the trace selector,
+ * `normalizeConfig` folds it into one canonical `{ steps, trace }` shape: an
+ * ordered `TxStep[]` and a `trace` RESOLVED to a 0-based index into it. It
+ * validates handle references, deploy-id uniqueness and the trace selector,
  * throwing on any inconsistency.
  *
  * This is a PURE function: no filesystem, no network, no mutation of its input.
@@ -19,16 +15,14 @@
  * through untouched (later milestones encode them).
  */
 
-import { SorobanLaunchArgs } from '../debugAdapter/types';
-
 /** A deploy step: upload + create, registering a handle `id -> contractId`. */
 export interface DeployStep {
   kind: 'deploy';
   /** Handle id later invoke steps reference via their `contract` field. */
   id: string;
-  /** Path to a prebuilt `.wasm` (new-schema `wasm` / legacy `wasmPath`). */
+  /** Path to a prebuilt `.wasm`. */
   wasm?: string;
-  /** Path to a contract crate dir to build (new-schema / legacy `contract`). */
+  /** Path to a contract crate dir to build. */
   contract?: string;
   /** Build command for a `contract`-dir build (default `stellar contract build`). */
   buildCommand?: string;
@@ -49,8 +43,9 @@ export interface InvokeStep {
    */
   id?: string;
   /**
-   * New schema: object keyed by spec param names. Legacy: `{type,value}[]`.
-   * Carried through verbatim at this milestone (no encoding yet).
+   * A named object keyed by spec param names, OR the positional
+   * `{type,value}[]` encoding. This is an arg ENCODING choice, not a legacy
+   * format. Carried through verbatim at this milestone (no encoding yet).
    */
   args?: unknown;
 }
@@ -70,36 +65,31 @@ export interface NormalizedConfig {
   trace: number;
 }
 
-/** The default handle id used when desugaring legacy single-invoke config. */
-const DEFAULT_HANDLE = '__default';
-
 /**
- * Raw config as authored. Extends the legacy `SorobanLaunchArgs` with the new
- * `transactions` + `trace` fields. Fully optional/loose: `normalizeConfig`
- * validates it.
+ * Raw config as authored: a `transactions` array plus a `trace` selector.
+ * Fully optional/loose: `normalizeConfig` validates it.
  */
-export interface RawLaunchConfig extends Partial<SorobanLaunchArgs> {
+export interface RawLaunchConfig {
   transactions?: unknown[];
   trace?: TraceSelector;
 }
 
 /**
- * Fold a raw launch config (new OR legacy schema) into the canonical
- * `{ steps, trace }` shape. Throws on any structural or referential error.
+ * Fold a raw launch config into the canonical `{ steps, trace }` shape. Throws
+ * on any structural or referential error.
  */
 export function normalizeConfig(raw: RawLaunchConfig): NormalizedConfig {
-  const hasTransactions = Array.isArray(raw?.transactions);
-  const hasLegacyFunction = typeof raw?.function === 'string';
-
-  if (hasTransactions && hasLegacyFunction) {
+  if (raw && 'function' in raw) {
     throw new Error(
-      'invalid config: use either the legacy `function` or the new `transactions`, not both',
+      'invalid config: the legacy single-invoke `function` config has been removed — ' +
+        'wrap it in a `transactions` array (see docs/debug-config.md)',
     );
   }
+  if (!Array.isArray(raw?.transactions)) {
+    throw new Error('invalid config: a `transactions` array is required');
+  }
 
-  const steps = hasTransactions
-    ? parseTransactions(raw.transactions as unknown[])
-    : desugarLegacy(raw);
+  const steps = parseTransactions(raw.transactions);
 
   validateHandles(steps);
 
@@ -177,47 +167,6 @@ function parseStep(tx: unknown, index: number): TxStep {
   throw new Error(
     `invalid config: transaction at index ${index} has unknown kind ${JSON.stringify(t.kind)}`,
   );
-}
-
-/**
- * Desugar the legacy single-invoke schema into a canonical two-step sequence:
- * `[deploy __default, invoke __default]`. Legacy `args` (a `{type,value}[]`)
- * are carried through untouched.
- */
-function desugarLegacy(raw: RawLaunchConfig): TxStep[] {
-  if (typeof raw?.function !== 'string' || raw.function.length === 0) {
-    throw new Error(
-      'invalid config: provide either a legacy `function` (+ `wasmPath`/`contract`) or a `transactions` array',
-    );
-  }
-
-  const deploy: DeployStep = { kind: 'deploy', id: DEFAULT_HANDLE };
-  if (typeof raw.wasmPath === 'string') {
-    deploy.wasm = raw.wasmPath;
-  }
-  if (typeof raw.contract === 'string') {
-    deploy.contract = raw.contract;
-  }
-  if (typeof raw.buildCommand === 'string') {
-    deploy.buildCommand = raw.buildCommand;
-  }
-  if (typeof raw.debugInfo === 'boolean') {
-    deploy.debugInfo = raw.debugInfo;
-  }
-  if (deploy.wasm === undefined && deploy.contract === undefined) {
-    throw new Error('invalid config: legacy config needs a `wasmPath` or a `contract` dir');
-  }
-
-  const invoke: InvokeStep = {
-    kind: 'invoke',
-    contract: DEFAULT_HANDLE,
-    function: raw.function,
-  };
-  if ('args' in raw) {
-    invoke.args = raw.args;
-  }
-
-  return [deploy, invoke];
 }
 
 /**

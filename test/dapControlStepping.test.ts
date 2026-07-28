@@ -29,8 +29,8 @@ const CONTROL_WASM = path.join(FIXTURES, 'control-debug.wasm');
 const CONTROL_LIB_SUFFIX = 'examples/control/src/lib.rs';
 
 /** Launch args for one control construct's trace, replayed with symbols. */
-function control(fn: string): { rawTrace: string; wasmPath: string; function: string } {
-  return { rawTrace: path.join(FIXTURES, `control-${fn}.trace.jsonl`), wasmPath: CONTROL_WASM, function: fn };
+function control(fn: string): { rawTrace: string; wasmPath: string } {
+  return { rawTrace: path.join(FIXTURES, `control-${fn}.trace.jsonl`), wasmPath: CONTROL_WASM };
 }
 
 const THREAD = { threadId: 1 };

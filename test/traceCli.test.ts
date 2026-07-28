@@ -104,10 +104,29 @@ describe('parseTraceArgs (M3 CLI devex)', () => {
   });
 
   describe('live mode (--contract/--wasm + --function)', () => {
-    it('--contract . --function add → run with launch.contract and launch.function', () => {
+    it('--contract . --function add → run with a deploy+invoke transactions config', () => {
       const p = asRun(parseTraceArgs(['--contract', '.', '--function', 'add']));
-      assert.strictEqual(p.launch.contract, '.');
-      assert.strictEqual(p.launch.function, 'add');
+
+      // Live mode now builds the single `transactions` schema: a deploy of the
+      // --contract dir under the fixed handle id 'contract', then an invoke of
+      // --function against that handle. (Cast through the not-yet-updated
+      // TraceLaunch type, which the implementer will reshape.)
+      const launch = p.launch as unknown as { transactions?: unknown[] };
+      const steps = launch.transactions!;
+      assert.strictEqual(steps.length, 2);
+
+      const deploy = steps[0] as { kind: string; id: string; contract?: string };
+      assert.strictEqual(deploy.kind, 'deploy');
+      assert.strictEqual(deploy.id, 'contract');
+      assert.strictEqual(deploy.contract, '.');
+
+      const invoke = steps[1] as { kind: string; contract: string; function: string };
+      assert.strictEqual(invoke.kind, 'invoke');
+      assert.strictEqual(invoke.contract, 'contract');
+      assert.strictEqual(invoke.function, 'add');
+
+      // The run result echoes the function name for the trace's meta record.
+      assert.strictEqual((p as unknown as { function?: string }).function, 'add');
     });
   });
 
@@ -119,7 +138,7 @@ describe('parseTraceArgs (M3 CLI devex)', () => {
       assert.ok(msg.includes('Invalid --args-json'), msg);
     });
 
-    it('valid JSON array → run with launch.args of the right length', () => {
+    it('valid JSON array → run with the invoke step carrying the parsed args', () => {
       const p = asRun(
         parseTraceArgs([
           '--contract',
@@ -130,8 +149,10 @@ describe('parseTraceArgs (M3 CLI devex)', () => {
           '[{"value":1,"type":"u32"}]',
         ]),
       );
-      assert.ok(p.launch.args, 'launch.args should be present');
-      assert.strictEqual(p.launch.args!.length, 1);
+      const launch = p.launch as unknown as { transactions?: unknown[] };
+      const invoke = launch.transactions![1] as { args?: unknown[] };
+      assert.ok(invoke.args, 'the invoke step should carry args');
+      assert.strictEqual(invoke.args!.length, 1);
     });
 
     it('valid JSON that is not an array (number) → "expected a JSON array"', () => {

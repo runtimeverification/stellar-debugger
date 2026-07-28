@@ -8,6 +8,7 @@ import {
   xdr,
 } from '@stellar/stellar-sdk';
 import { TurnkeyPipeline } from '../src/pipeline/TurnkeyPipeline';
+import { SorobanLaunchArgs } from '../src/debugAdapter/types';
 import { MockKometNode } from './support/mockKometNode';
 import { parseWasmSections } from '../src/wasm/sections';
 import { MemoryImage } from '../src/debugAdapter/MemoryImage';
@@ -40,14 +41,20 @@ describe('TurnkeyPipeline (against mock komet-node)', () => {
     const pipeline = new TurnkeyPipeline();
     return pipeline.run(
       {
-        wasmPath: WASM,
-        function: 'add',
-        args: [
-          { value: 5, type: 'u32' },
-          { value: 6, type: 'u32' },
+        transactions: [
+          { kind: 'deploy', id: 'c', wasm: WASM },
+          {
+            kind: 'invoke',
+            contract: 'c',
+            function: 'add',
+            args: [
+              { value: 5, type: 'u32' },
+              { value: 6, type: 'u32' },
+            ],
+          },
         ],
         node: { attach: true, host: '127.0.0.1', port },
-      },
+      } as unknown as SorobanLaunchArgs,
       () => undefined,
     );
   }
@@ -161,11 +168,12 @@ describe('TurnkeyPipeline debug-strip + memory-backed variable inspection', () =
     const pipeline = new TurnkeyPipeline();
     return pipeline.run(
       {
-        wasmPath: INCR_WASM,
-        function: 'increment',
-        args: [{ value: 5, type: 'u32' }],
+        transactions: [
+          { kind: 'deploy', id: 'c', wasm: INCR_WASM },
+          { kind: 'invoke', contract: 'c', function: 'increment', args: [{ value: 5, type: 'u32' }] },
+        ],
         node: { attach: true, host: '127.0.0.1', port },
-      },
+      } as unknown as SorobanLaunchArgs,
       () => undefined,
     );
   }

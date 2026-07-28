@@ -33,7 +33,7 @@ so you have a real Soroban project to debug immediately.
   demonstrates full **Rust source mapping** offline.
 
 Each contract is an independent crate (its own `Cargo.toml`/`Cargo.lock`/
-`target/`), which is what the extension's `contract` launch attribute expects.
+`target/`), which is what a `deploy` step's `contract` field expects.
 
 ## Try it
 
@@ -61,8 +61,8 @@ Open the Run and Debug view and pick a config from `.vscode/launch.json`:
    stepping working), spawns komet-node, deploys, invokes, and replays the
    resulting trace with Rust source mapping. Requires the toolchain (Rust + wasm
    target, Stellar CLI, komet-node), all present in the devcontainer. Set
-   `"debugInfo": false` in a launch config to opt out of the debug build (you
-   then debug at the wasm level only).
+   `"debugInfo": false` on a `deploy` step to opt out of the debug build (you
+   then debug that contract at the wasm level only).
 
 Note: komet-node's tracer stops at instructions it cannot decode (it reports
 them as `unknown`, e.g. `if`), so a trace can end before the invocation does —
@@ -71,4 +71,20 @@ depending on codegen, some contracts replay only partially.
 ## Adding your own contract
 
 Drop a new crate directory here (with a `Cargo.toml` exposing a `#[contract]`),
-then add a launch config pointing `contract` at it and naming the `function`.
+then add a launch config whose `transactions` deploy it and invoke a function:
+
+```jsonc
+{
+  "type": "soroban",
+  "request": "launch",
+  "name": "Soroban: Debug my_fn",
+  "transactions": [
+    { "kind": "deploy", "id": "mine", "contract": "${workspaceFolder}/my_crate" },
+    { "kind": "invoke", "contract": "mine", "function": "my_fn", "args": { "x": 1 } }
+  ]
+}
+```
+
+See [`../docs/debug-config.md`](../docs/debug-config.md) for the full
+configuration reference (multi-contract systems, composite argument types,
+`trace` selection, and offline replay).

@@ -1,15 +1,15 @@
 /**
- * M1 acceptance tests for the multi-transaction debug-config normalizer.
+ * Acceptance tests for the multi-transaction debug-config normalizer.
  *
- * Pins the "M1 acceptance" section of the spec: a PURE function
- * `normalizeConfig(raw)` (implementer's home: src/pipeline/config.ts) that turns
- * BOTH the new `transactions` + `trace` schema AND the legacy single-invoke
- * config into one canonical `{ steps, trace }` shape, with the listed validation
- * rejections.
+ * Pins a PURE function `normalizeConfig(raw)` (implementer's home:
+ * src/pipeline/config.ts) that turns the single `transactions` + `trace` schema
+ * into one canonical `{ steps, trace }` shape, with the listed validation
+ * rejections. There is exactly ONE live config format: an ordered, non-empty
+ * `transactions` array (the legacy single-invoke top-level config has been
+ * REMOVED).
  *
  * This module is intentionally IO-free (no network, no filesystem) so the suite
- * is deterministic. It imports from the not-yet-existing implementer module on
- * purpose (TDD red phase).
+ * is deterministic.
  */
 
 import * as assert from 'assert';
@@ -23,13 +23,13 @@ import { normalizeConfig } from '../src/pipeline/config';
 interface DeployStep {
   kind: 'deploy';
   id: string;
-  /** New-schema `wasm` path, or the legacy `wasmPath`, in canonical `wasm`. */
+  /** Prebuilt `.wasm` path. */
   wasm?: string;
-  /** Contract crate dir (legacy `contract` / new-schema `contract`). */
+  /** Contract crate dir (built to a wasm). */
   contract?: string;
-  /** OPTIONAL (M4): build command threaded into a `contract`-dir build. */
+  /** OPTIONAL: build command threaded into a `contract`-dir build. */
   buildCommand?: string;
-  /** OPTIONAL (M4): inject DWARF debug info when building from a crate dir. */
+  /** OPTIONAL: inject DWARF debug info when building from a crate dir. */
   debugInfo?: boolean;
 }
 
@@ -38,9 +38,9 @@ interface InvokeStep {
   /** Handle id referencing a prior deploy step (NOT yet a live contractId). */
   contract: string;
   function: string;
-  /** New: object keyed by spec param names. Legacy: `{type,value}[]`. Passed through untouched at M1. */
+  /** A named object keyed by spec param names, or the positional `{type,value}[]` encoding. Passed through untouched. */
   args?: unknown;
-  /** OPTIONAL (M3 extension): a trace selector may match this invoke id. */
+  /** OPTIONAL: a trace selector may match this invoke id. */
   id?: string;
 }
 
@@ -114,65 +114,7 @@ describe('M1 normalizeConfig', () => {
   });
 
   // ------------------------------------------------------------------------
-  // 2. Legacy single-invoke config → SAME canonical shape (desugaring).
-  // ------------------------------------------------------------------------
-  describe('legacy single-invoke desugaring', () => {
-    const legacyWasm = {
-      type: 'soroban',
-      request: 'launch',
-      function: 'add',
-      args: [
-        { value: 5, type: 'u32' },
-        { value: 6, type: 'u32' },
-      ],
-      wasmPath: '/abs/x.wasm',
-    };
-
-    it('desugars to [deploy __default, invoke on __default]', () => {
-      const { steps } = norm(legacyWasm);
-      assert.strictEqual(steps.length, 2);
-
-      const deploy = steps[0] as DeployStep;
-      assert.strictEqual(deploy.kind, 'deploy');
-      assert.strictEqual(deploy.id, '__default');
-      assert.strictEqual(deploy.wasm, '/abs/x.wasm');
-
-      const invoke = steps[1] as InvokeStep;
-      assert.strictEqual(invoke.kind, 'invoke');
-      assert.strictEqual(invoke.contract, '__default');
-      assert.strictEqual(invoke.function, 'add');
-    });
-
-    it('carries the legacy {type,value}[] args through untouched', () => {
-      const invoke = norm(legacyWasm).steps[1] as InvokeStep;
-      assert.deepStrictEqual(invoke.args, [
-        { value: 5, type: 'u32' },
-        { value: 6, type: 'u32' },
-      ]);
-    });
-
-    it('desugars a legacy `contract` crate dir into the deploy step', () => {
-      const legacyDir = {
-        type: 'soroban',
-        request: 'launch',
-        function: 'increment',
-        args: [{ value: 1, type: 'u32' }],
-        contract: '/abs/crate',
-      };
-      const deploy = norm(legacyDir).steps[0] as DeployStep;
-      assert.strictEqual(deploy.kind, 'deploy');
-      assert.strictEqual(deploy.id, '__default');
-      assert.strictEqual(deploy.contract, '/abs/crate');
-    });
-
-    it('defaults the legacy trace to the last step ("last")', () => {
-      // No `trace` key → default "last" → the invoke at index 1.
-      assert.strictEqual(norm(legacyWasm).trace, 1);
-    });
-  });
-
-  // ------------------------------------------------------------------------
-  // 3. Trace selector resolution: "last" | index | id → 0-based position.
+  // 2. Trace selector resolution: "last" | index | id → 0-based position.
   // ------------------------------------------------------------------------
   describe('trace selector resolution', () => {
     const threeSteps = {
@@ -208,7 +150,7 @@ describe('M1 normalizeConfig', () => {
   });
 
   // ------------------------------------------------------------------------
-  // 4. Validation rejections (spec point 4).
+  // 3. Validation rejections.
   // ------------------------------------------------------------------------
   describe('validation rejections', () => {
     it('rejects an empty `transactions` array', () => {
@@ -277,21 +219,51 @@ describe('M1 normalizeConfig', () => {
       );
     });
 
-    it('rejects a config carrying BOTH legacy `function` and `transactions`', () => {
-      assert.throws(() =>
-        norm({
-          type: 'soroban',
-          request: 'launch',
-          function: 'add',
-          args: [{ value: 1, type: 'u32' }],
-          transactions: [{ kind: 'deploy', id: 'a', wasm: '/a.wasm' }],
-        }),
+    it('rejects a config with no `transactions` array', () => {
+      assert.throws(() => norm({ type: 'soroban', request: 'launch' }));
+    });
+
+    it('rejects a leftover legacy top-level `function` with a migration error', () => {
+      // The legacy single-invoke config was REMOVED. This config is WELL-FORMED
+      // by the OLD rules (a `function` + a `wasmPath` source the old desugar
+      // would have ACCEPTED), so it distinguishes new behavior from old: under
+      // the removed legacy path it normalized cleanly; now it must fail with a
+      // clear migration message pointing at the `transactions` array.
+      assert.throws(
+        () =>
+          norm({
+            type: 'soroban',
+            request: 'launch',
+            function: 'add',
+            args: [{ value: 1, type: 'u32' }],
+            wasmPath: '/abs/x.wasm',
+          }),
+        /legacy|transactions/i,
+      );
+    });
+
+    it('rejects a stray legacy top-level `function` even when `transactions` is present', () => {
+      // A half-migrated config (a valid `transactions` array plus a leftover
+      // top-level `function`) must be caught, not silently misread by ignoring
+      // the stray `function`.
+      assert.throws(
+        () =>
+          norm({
+            type: 'soroban',
+            request: 'launch',
+            function: 'add',
+            transactions: [
+              { kind: 'deploy', id: 'a', wasm: '/a.wasm' },
+              { kind: 'invoke', contract: 'a', function: 'run' },
+            ],
+          }),
+        /legacy|transactions/i,
       );
     });
   });
 
   // ------------------------------------------------------------------------
-  // 5. Purity: same input in, same output out; no shared mutable state.
+  // 4. Purity: same input in, same output out; no shared mutable state.
   // ------------------------------------------------------------------------
   describe('purity', () => {
     it('is referentially transparent for the same input', () => {
@@ -323,11 +295,11 @@ describe('M1 normalizeConfig', () => {
   });
 
   // ------------------------------------------------------------------------
-  // 6. (M3 extension) Optional invoke `id` + trace-by-invoke-id.
+  // 5. Optional invoke `id` + trace-by-invoke-id.
   //    An invoke MAY carry an `id`; the `trace` string selector then matches an
   //    invoke id, not just a deploy id. All existing selector behaviour stays.
   // ------------------------------------------------------------------------
-  describe('optional invoke id + trace-by-invoke-id (M3 extension)', () => {
+  describe('optional invoke id + trace-by-invoke-id', () => {
     const raw = {
       type: 'soroban',
       request: 'launch',
@@ -379,54 +351,10 @@ describe('M1 normalizeConfig', () => {
   });
 
   // ------------------------------------------------------------------------
-  // 7. (M4 extension) DeployStep gains optional build controls, and legacy
-  //    desugaring populates them from the raw config so a `contract`-dir build
-  //    keeps its build command + debug-info injection (previously dropped).
+  // 6. DeployStep carries optional build controls (buildCommand + debugInfo)
+  //    so a `contract`-dir build keeps its build command + debug-info injection.
   // ------------------------------------------------------------------------
-  describe('deploy build options: buildCommand + debugInfo (M4 extension)', () => {
-    it('desugars legacy `buildCommand` + `debugInfo` onto the __default deploy step', () => {
-      const deploy = norm({
-        type: 'soroban',
-        request: 'launch',
-        function: 'increment',
-        args: [{ value: 1, type: 'u32' }],
-        contract: '/abs/crate',
-        buildCommand: 'stellar contract build',
-        debugInfo: true,
-      }).steps[0] as DeployStep;
-
-      assert.strictEqual(deploy.kind, 'deploy');
-      assert.strictEqual(deploy.contract, '/abs/crate');
-      assert.strictEqual(deploy.buildCommand, 'stellar contract build');
-      assert.strictEqual(deploy.debugInfo, true);
-    });
-
-    it('carries a legacy `debugInfo: false` through verbatim (not conflated with unset)', () => {
-      const deploy = norm({
-        type: 'soroban',
-        request: 'launch',
-        function: 'increment',
-        args: [{ value: 1, type: 'u32' }],
-        contract: '/abs/crate',
-        debugInfo: false,
-      }).steps[0] as DeployStep;
-
-      assert.strictEqual(deploy.debugInfo, false);
-    });
-
-    it('leaves both build options undefined when the legacy config omits them', () => {
-      const deploy = norm({
-        type: 'soroban',
-        request: 'launch',
-        function: 'add',
-        args: [{ value: 5, type: 'u32' }],
-        wasmPath: '/abs/x.wasm',
-      }).steps[0] as DeployStep;
-
-      assert.strictEqual(deploy.buildCommand, undefined);
-      assert.strictEqual(deploy.debugInfo, undefined);
-    });
-
+  describe('deploy build options: buildCommand + debugInfo', () => {
     it('preserves `buildCommand` + `debugInfo` declared on a new-schema deploy step', () => {
       const deploy = norm({
         type: 'soroban',

@@ -4,12 +4,10 @@
  *
  *   (spawn + health-check komet-node) -> normalizeConfig -> SequenceRunner.run
  *
- * Both the legacy single-invoke config (`function` + `args` + `wasmPath`/
- * `contract`) and the new `transactions` sequence config flow through this one
- * path: `normalizeConfig` (M1) folds either shape into a canonical
- * `{ steps, trace }`, and the `SequenceRunner` (M3) executes it against one
- * accumulating komet-node ledger, never throwing on a FAILED tx and fetching
- * the traced step's trace regardless of status.
+ * `normalizeConfig` (M1) folds the `transactions` sequence config into a
+ * canonical `{ steps, trace }`, and the `SequenceRunner` (M3) executes it
+ * against one accumulating komet-node ledger, never throwing on a FAILED tx and
+ * fetching the traced step's trace regardless of status.
  *
  * In `attach` mode the spawn step is skipped and the pipeline talks to an
  * already-running node.
@@ -34,8 +32,8 @@ export class TurnkeyPipeline {
     const host = args.node?.host ?? 'localhost';
     const port = args.node?.port ?? 8000;
 
-    // 1. Normalize the launch config (legacy OR new `transactions`) into a
-    // canonical `{ steps, trace }`. This also validates it before we spawn.
+    // 1. Normalize the launch config's `transactions` into a canonical
+    // `{ steps, trace }`. This also validates it before we spawn.
     const normalized = normalizeConfig(args as RawLaunchConfig);
 
     // 2. Spawn komet-node unless attaching to a running one.

@@ -76,18 +76,7 @@ Add a `soroban` configuration to your `.vscode/launch.json`. A configuration des
 
 Set a breakpoint in your contract's Rust source, start the configuration, and step through the traced transaction — forward or backward.
 
-For the common case of a single call you can skip `transactions` and write the invoke inline; the debugger deploys the contract and invokes it for you:
-
-```jsonc
-{
-  "type": "soroban",
-  "request": "launch",
-  "name": "Debug add(1, 2)",
-  "contract": "${workspaceFolder}",   // crate dir containing Cargo.toml
-  "function": "add",
-  "args": { "a": 1, "b": 2 }
-}
-```
+Even the simplest single-call session is one `deploy` plus one `invoke` — there is one config shape, so a two-contract system is just a longer `transactions` array. See [`docs/debug-config.md`](docs/debug-config.md) for the complete reference, including multi-contract systems, composite argument types, and offline replay.
 
 ### Configuration reference
 
@@ -95,11 +84,11 @@ Top-level attributes:
 
 | Attribute | Description |
 |-----------|-------------|
-| `transactions` | Ordered array of `deploy` / `invoke` steps (see below). Mutually exclusive with the top-level `function` shorthand. |
+| `transactions` | Ordered, non-empty array of `deploy` / `invoke` steps (see below) — the live sequence to run. |
 | `trace` | Which transaction feeds the debug session: `"last"` (default), a 0-based index into `transactions`, or a step `id` (a deploy's `id` or an invoke's optional `id`). |
 | `sourceSecret` | Source account secret (`S…`) used to sign every transaction. A deterministic account is derived if omitted. Its address is available in `args` as `${sourceAddress}`. |
 | `node` | Local-network connection/spawn settings: `attach`, `host`, `port`, `command`, `ioDir`. |
-| `rawTrace` | Replay a previously recorded run from a file instead of building and deploying. |
+| `rawTrace` | Replay a previously recorded run from a file instead of building and deploying (optionally with `wasmPath` for source mapping). |
 
 A **`deploy`** step uploads a contract and registers a handle:
 
@@ -124,9 +113,9 @@ An **`invoke`** step calls a function on a deployed handle:
 
 Two substitution tokens are expanded inside string `args` values: `${sourceAddress}` (the source account's address) and `${contract:<id>}` (the deployed address behind a handle).
 
-The single-call shorthand accepts the same fields inline: `function`, `args`, and a contract source (`contract` or `wasmPath`), plus `buildCommand` / `debugInfo`. `args` there also accepts the positional form `[{ "type": "u32", "value": 1 }, …]`.
+`args` also accepts a lower-level positional form — an array `[{ "type": "u32", "value": 1 }, …]`, one entry per parameter — as an alternative to the named object.
 
-Two settings let you point at executables that aren't on your `PATH`: `soroban.stellar.path` and `soroban.kometNode.path`.
+Two settings let you point at executables that aren't on your `PATH`: `soroban.stellar.path` and `soroban.kometNode.path`. For the full reference — multi-contract systems, every argument shape, and offline replay — see [`docs/debug-config.md`](docs/debug-config.md).
 
 ### Beyond the editor
 

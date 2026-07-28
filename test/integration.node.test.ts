@@ -18,6 +18,7 @@ import * as assert from 'assert';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { TurnkeyPipeline } from '../src/pipeline/TurnkeyPipeline';
+import { SorobanLaunchArgs } from '../src/debugAdapter/types';
 import { MemoryImage } from '../src/debugAdapter/MemoryImage';
 import { makeRuntimeState } from '../src/debugAdapter/runtimeState';
 import { evalLocation } from '../src/dwarf/locexpr';
@@ -61,15 +62,21 @@ describe('TurnkeyPipeline (real komet-node)', function () {
     try {
       const resolved = await pipeline.run(
         {
-          wasmPath: WASM,
-          function: 'add',
-          args: [
-            { value: 5, type: 'u32' },
-            { value: 6, type: 'u32' },
+          transactions: [
+            { kind: 'deploy', id: 'c', wasm: WASM },
+            {
+              kind: 'invoke',
+              contract: 'c',
+              function: 'add',
+              args: [
+                { value: 5, type: 'u32' },
+                { value: 6, type: 'u32' },
+              ],
+            },
           ],
           // attach:false -> the pipeline spawns komet-node itself.
           node: nodeConfig(),
-        },
+        } as unknown as SorobanLaunchArgs,
         (msg) => console.log(msg),
       );
 
@@ -107,7 +114,13 @@ describe('TurnkeyPipeline (real komet-node)', function () {
     const pipeline = new TurnkeyPipeline();
     try {
       const resolved = await pipeline.run(
-        { wasmPath: INCREMENT_WASM, function: 'increment', args: [{ value: 5, type: 'u32' }], node: nodeConfig() },
+        {
+          transactions: [
+            { kind: 'deploy', id: 'c', wasm: INCREMENT_WASM },
+            { kind: 'invoke', contract: 'c', function: 'increment', args: [{ value: 5, type: 'u32' }] },
+          ],
+          node: nodeConfig(),
+        } as unknown as SorobanLaunchArgs,
         (msg) => console.log(msg),
       );
       assert.ok(resolved.model.length > 0, 'expected a non-empty trace');
