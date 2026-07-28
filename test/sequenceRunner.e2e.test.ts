@@ -54,6 +54,11 @@ const KOMET_NODE_COMMAND = process.env.KOMET_NODE_COMMAND ?? 'komet-node';
 const optedOut = process.env.KOMET_NODE_E2E === '0';
 // Port 8056 keeps this suite off integration.node.test.ts's port 8000.
 const PORT = Number(process.env.KOMET_NODE_E2E_PORT ?? 8056);
+// How long the presence probe waits for `<command> --help` to return. The kup
+// binary answers instantly, but a locally-built dev node (run from source) can
+// take ~15s to import its K/pyk machinery on a cold start, so the default is
+// generous and overridable for slower environments.
+const PROBE_TIMEOUT_MS = Number(process.env.KOMET_NODE_PROBE_TIMEOUT_MS ?? 30_000);
 
 // A deterministic source account, so `${sourceAddress}` (and the whole run) is
 // reproducible — never `Keypair.random()`.
@@ -143,7 +148,7 @@ describe('M4 SequenceRunner e2e', function () {
     }
     // Fail loudly when the node is missing — a silent skip is exactly how a
     // breaking change slips through unnoticed.
-    const probe = spawnSync(KOMET_NODE_COMMAND, ['--help'], { stdio: 'ignore', timeout: 10_000 });
+    const probe = spawnSync(KOMET_NODE_COMMAND, ['--help'], { stdio: 'ignore', timeout: PROBE_TIMEOUT_MS });
     if (probe.error) {
       throw new Error(
         `komet-node not found on PATH (command: '${KOMET_NODE_COMMAND}'). The real-node ` +
