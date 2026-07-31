@@ -201,7 +201,13 @@ export class SorobanDebugSession extends DebugSession {
       this.model.seek(this.firstStopPoint());
       this.sendEvent(new StoppedEvent('entry', THREAD_ID));
     } catch (e) {
-      this.sendErrorResponse(response, 2000, `Failed to start debug session: ${(e as Error).message}`);
+      // sendErrorResponse surfaces only a one-line, non-copyable modal. Mirror
+      // the full error (with stack) into the debug console first, so the details
+      // land in the same copyable log as the rest of the launch output.
+      const message = e instanceof Error ? e.message : String(e);
+      const detail = e instanceof Error ? (e.stack ?? e.message) : String(e);
+      this.log(`Failed to start debug session: ${detail}`);
+      this.sendErrorResponse(response, 2000, `Failed to start debug session: ${message}`);
       this.sendEvent(new TerminatedEvent());
     }
   }
