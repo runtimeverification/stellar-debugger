@@ -10,6 +10,14 @@
  * ground truth), so a record's `pos` is only trusted when its instruction
  * matches the static disassembly at that code offset.
  *
+ * Position validation also enforces a cross-contract gate. A traced
+ * transaction interleaves the ROOT contract with cross-contract sub-calls
+ * (an oracle, a token, ...), yet the disassembly and DWARF are built from
+ * ONLY the root contract's wasm. A sub-call's small `pos` collides with the
+ * root's low code offsets and would mis-map to bogus source, so records whose
+ * `executingContract` differs from the root are made invisible (position ->
+ * null). Records carrying no tag (older traces) are never gated.
+ *
  * Missing or unreadable DWARF is NEVER fatal: the session degrades to a
  * NullSourceMapper (wasm-level debugging) with a note in the debug console.
  *
@@ -36,9 +44,32 @@ import { DwarfDebugInfo } from '../dwarf/DebugInfo';
  * with the same mnemonic. `["unknown"]` records pass on the exact-address
  * check alone. Everything else (null pos, mid-instruction offsets, records
  * from other sections' address spaces) maps to null.
+ *
+ * A cross-contract gate runs first: the root contract is the `executingContract`
+ * of the first record carrying a non-empty string tag, and any record tagged
+ * with a DIFFERENT non-empty contract validates to null regardless of
+ * pos/mnemonic. This is because a sub-call's `pos` collides with the root's
+ * address space while the disassembly/DWARF here is the root contract's ONLY.
+ * A tag that is undefined, null, or the empty string (older, untagged traces,
+ * or an untagged host frame) is treated as "no contract" and never gated — the
+ * empty string is spared symmetrically in both the root search and the gate.
+ *
+ * The gate assumes the supplied `disassembly` is the trace ROOT contract's wasm
+ * — true by construction in the live pipeline (`tracedWasm` is the invoked,
+ * top-level contract). A replay `wasmPath` (RawTraceBackend) for a NON-root
+ * contract would invert the gate and hide the wrong records; that is caller
+ * error, no worse than the pre-gate mis-mapping.
  */
 export function validatedPositions(model: TraceModel, disassembly: Disassembly): (number | null)[] {
+  const rootRecord = model.records.find(
+    (rec) => typeof rec.executingContract === 'string' && rec.executingContract !== '',
+  );
+  const root = rootRecord ? (rootRecord.executingContract as string) : null;
   return model.records.map((rec) => {
+    // A truthy tag is a non-empty contract id; '', null, undefined are "no contract".
+    if (root !== null && rec.executingContract && rec.executingContract !== root) {
+      return null;
+    }
     if (rec.pos === null) {
       return null;
     }

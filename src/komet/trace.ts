@@ -80,6 +80,12 @@ export interface TraceRecord {
    * absent key) or for traces that do not carry memory. See the module header.
    */
   mem?: MemRun[];
+  /**
+   * The contract whose code is executing at this record (komet's per-record
+   * tag). Used to gate cross-contract records against the root contract's
+   * disassembly/DWARF — see debugAdapter/artifacts.ts. Absent in older traces.
+   */
+  executingContract?: string | null;
 }
 
 /** The opcode mnemonic of a record (e.g. "local.get"). */
@@ -167,6 +173,11 @@ export function toTraceRecord(value: unknown, lineNo: number): TraceRecord {
     });
   }
 
+  const executingContract = obj.executingContract;
+  if (executingContract !== undefined && executingContract !== null && typeof executingContract !== 'string') {
+    throw new TraceParseError(`trace line ${lineNo}: 'executingContract' must be a string or null`);
+  }
+
   return {
     pos: pos as number | null,
     instr: obj.instr as [string, ...unknown[]],
@@ -174,6 +185,7 @@ export function toTraceRecord(value: unknown, lineNo: number): TraceRecord {
     locals,
     globals,
     mem,
+    executingContract: executingContract as string | null | undefined,
   };
 }
 
