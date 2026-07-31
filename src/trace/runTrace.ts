@@ -23,6 +23,8 @@ export interface CliTraceOpts extends ProjectOpts {
   function?: string;
   wasm?: string;
   allowNoSource?: boolean;
+  /** Restrict source stops to workspace code (default true, S21). */
+  justMyCode?: boolean;
 }
 
 /**
@@ -30,7 +32,7 @@ export interface CliTraceOpts extends ProjectOpts {
  * no source-level stops unless `opts.allowNoSource` is set.
  */
 export function runCliTrace(resolved: ResolvedTrace, opts?: CliTraceOpts): string[] {
-  const stopModel = buildStopModel(resolved);
+  const stopModel = buildStopModel(resolved, { justMyCode: opts?.justMyCode });
 
   if (stopModel.runStarts.length === 0 && !opts?.allowNoSource) {
     throw new Error(

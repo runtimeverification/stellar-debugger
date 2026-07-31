@@ -179,6 +179,24 @@ every stop, the unfiltered run starts stand.
   (S2), `continue`/`reverseContinue` still settle on the last/first stop (S14),
   and reverse steps still clamp to the first stop (S3/S8) — only forward
   *source* stepping past the end terminates.
+- **S21** (just-my-code): the launch option `justMyCode` (default `true`)
+  governs whether *statement* stepping may come to rest in non-workspace source.
+  A source path is **workspace** unless its normalized form contains any of
+  `/.rustup/`, `/.cargo/`, or `/rustc/` — the locations of the Rust toolchain
+  (`std`/`core`) and crates.io dependency sources. (An opt-0 build maps its deep,
+  un-inlined call chains into exactly these — `core/src/result.rs`,
+  `core/src/option.rs`, registry crates — so without S21 `stepIn`/`continue`
+  land on library internals the user never wrote.) When `justMyCode` is true, a
+  statement-granularity stop point (post-S17/S18) whose mapped file is
+  non-workspace is dropped from the stop set, so `next`/`stepIn`/`stepOut`/
+  `continue`/`stepBack` rest only in the user's own code and step over a foreign
+  frame in one press; when false, non-workspace stops remain (pre-S21 behavior).
+  Instruction granularity (every visible record remains an instruction stop),
+  the `instructionPointerReference` (S11), and breakpoint resolution (S12/S15)
+  are all unaffected — S21 shapes only where *source* stepping rests. It is the
+  final filter after S17/S18 and obeys the same non-emptiness safety: if every
+  statement stop is non-workspace, the unfiltered statement stops stand
+  (preserving S1–S3), so a purely-library trace is still steppable.
 
 ### Statement stops: declarations and braces
 

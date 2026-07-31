@@ -172,7 +172,7 @@ export class SorobanDebugSession extends DebugSession {
       this.memoryImage = new MemoryImage(this.model.records);
       this.disassembly = resolved.disassembly;
       this.positions = resolved.positions;
-      const stopModel = buildStopModel(resolved);
+      const stopModel = buildStopModel(resolved, { justMyCode: args.justMyCode });
       this.validatedPosToIndices = stopModel.validatedPosToIndices;
       this.visibleIndices = stopModel.visibleIndices;
       this.depths = stopModel.depths;

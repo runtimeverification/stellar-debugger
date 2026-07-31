@@ -60,6 +60,7 @@ describe('parseTraceArgs (M3 CLI devex)', () => {
         '--contract',
         '--function',
         '--allow-no-source',
+        '--no-just-my-code',
         '-h, --help',
         'Examples',
       ]) {
@@ -217,6 +218,16 @@ describe('parseTraceArgs (M3 CLI devex)', () => {
     it('--allow-no-source → run with opts.allowNoSource === true', () => {
       const p = asRun(parseTraceArgs(['--raw-trace', 'r', '--allow-no-source']));
       assert.strictEqual(p.opts.allowNoSource, true);
+    });
+
+    it('--no-just-my-code → run with opts.justMyCode === false (S21)', () => {
+      const p = asRun(parseTraceArgs(['--raw-trace', 'r', '--no-just-my-code']));
+      assert.strictEqual(p.opts.justMyCode, false);
+    });
+
+    it('without the flag, opts.justMyCode is undefined (defaults to true downstream)', () => {
+      const p = asRun(parseTraceArgs(['--raw-trace', 'r']));
+      assert.strictEqual(p.opts.justMyCode, undefined);
     });
 
     it('--out o.jsonl → run with out === "o.jsonl"', () => {

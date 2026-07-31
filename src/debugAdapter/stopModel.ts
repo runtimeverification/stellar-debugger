@@ -18,6 +18,7 @@ import {
   classifyLineRole,
   computeDepths,
   computeRunStarts,
+  myCodeStops,
   statementStops,
 } from './stops';
 import { ResolvedTrace } from './types';
@@ -42,9 +43,18 @@ export interface StopModel {
 /**
  * Derive the trace's stop model from a resolved trace, reproducing exactly the
  * inline computation SorobanDebugSession.launchRequest performed.
+ *
+ * `opts.justMyCode` (default true, S21) restricts the statement-granularity
+ * stop set to workspace source, dropping stops that rest in Rust toolchain or
+ * crates.io dependency sources. Instruction granularity, depths, raw run
+ * starts, and the position map are unaffected.
  */
-export function buildStopModel(resolved: ResolvedTrace): StopModel {
+export function buildStopModel(
+  resolved: ResolvedTrace,
+  opts?: { justMyCode?: boolean },
+): StopModel {
   const { model, source, disassembly, positions } = resolved;
+  const justMyCode = opts?.justMyCode ?? true;
 
   const validatedPosToIndices = new Map<number, number[]>();
   const visibleIndices: number[] = [];
@@ -62,9 +72,13 @@ export function buildStopModel(resolved: ResolvedTrace): StopModel {
 
   const depths = computeDepths(model.records, positions, disassembly.functionRanges);
   const rawRunStarts = computeRunStarts(positions, depths, (i) => source.lineKeyForIndex(i));
-  const runStarts = statementStops(rawRunStarts, depths, (i) =>
+  const stmtStops = statementStops(rawRunStarts, depths, (i) =>
     classifyLineRole(source.sourceTextForIndex(i)),
   );
+  // S21: after S17/S18, restrict source stops to the user's own workspace code.
+  const runStarts = justMyCode
+    ? myCodeStops(stmtStops, (i) => source.locationForIndex(i)?.path ?? null)
+    : stmtStops;
 
   const firstStopPoint = runStarts[0] ?? visibleIndices[0] ?? 0;
   const lastStopPoint =

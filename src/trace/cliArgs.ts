@@ -28,6 +28,7 @@ Options:
   --depth <n>           Max variable-expansion depth (default 3).
   --max-children <n>    Max children materialized per aggregate (default 64).
   --allow-no-source     Don't error when the trace has no source-level stops.
+  --no-just-my-code     Include std/core and dependency source in the stops (default: only workspace code).
   -h, --help            Show this help.
 
 Examples:
@@ -47,7 +48,7 @@ export type TraceParse =
       /** Echoed for the trace's meta record: the symbol-supplying wasm. */
       wasm?: string;
       out?: string;
-      opts: { maxDepth?: number; maxChildren?: number; allowNoSource?: boolean };
+      opts: { maxDepth?: number; maxChildren?: number; allowNoSource?: boolean; justMyCode?: boolean };
     };
 
 const TRACE_HINT = "Run 'soroban-trace --help' for usage.";
@@ -91,6 +92,7 @@ export function parseTraceArgs(argv: string[]): TraceParse {
 
   const values: Record<string, string> = {};
   let allowNoSource = false;
+  let noJustMyCode = false;
 
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
@@ -103,6 +105,8 @@ export function parseTraceArgs(argv: string[]): TraceParse {
       i++;
     } else if (token === '--allow-no-source') {
       allowNoSource = true;
+    } else if (token === '--no-just-my-code') {
+      noJustMyCode = true;
     } else if (looksLikeFlag(token)) {
       return err(`Unknown option: ${token}`);
     } else {
@@ -181,10 +185,13 @@ export function parseTraceArgs(argv: string[]): TraceParse {
     };
   }
 
-  const opts: { maxDepth?: number; maxChildren?: number; allowNoSource?: boolean } = {};
+  const opts: { maxDepth?: number; maxChildren?: number; allowNoSource?: boolean; justMyCode?: boolean } =
+    {};
   if (depth !== undefined) opts.maxDepth = Number(depth);
   if (maxChildren !== undefined) opts.maxChildren = Number(maxChildren);
   if (allowNoSource) opts.allowNoSource = true;
+  // Only set when explicitly disabled; absence means "default true" downstream (S21).
+  if (noJustMyCode) opts.justMyCode = false;
 
   return { kind: 'run', launch, function: fn, wasm: wasmPath, out, opts };
 }

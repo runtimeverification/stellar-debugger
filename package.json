@@ -162,6 +162,11 @@
               "sourceSecret": {
                 "type": "string",
                 "description": "Optional source account secret (S...). If omitted, a fresh account is seeded."
+              },
+              "justMyCode": {
+                "type": "boolean",
+                "markdownDescription": "Restrict source stepping to files in your workspace (default `true`). When enabled, `stepIn`/`next`/`continue` skip over Rust standard library (`std`/`core`) and crates.io dependency sources, resting only in your own code. Set `false` to also stop in those non-workspace sources.",
+                "default": true
               }
             }
           }

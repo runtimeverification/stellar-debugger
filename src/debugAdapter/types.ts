@@ -45,6 +45,11 @@ export interface SorobanLaunchArgs extends DebugProtocol.LaunchRequestArguments 
   sourceSecret?: string;
   /** Attach mode: replay a precomputed JSONL trace file (skips all RPC). */
   rawTrace?: string;
+  /**
+   * Restrict source stepping to workspace files (default true, see S21): drops
+   * statement stops that rest in Rust std/core or crates.io dependency sources.
+   */
+  justMyCode?: boolean;
 }
 
 /** Progress reporter so backends can stream status into the debug console. */
