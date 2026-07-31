@@ -132,6 +132,28 @@ describe('M2 specEncode', () => {
     });
   });
 
+  describe('loadContractSpec — event (kind-5) spec entries', () => {
+    // Guards parsing of protocol-23 `SC_SPEC_ENTRY_EVENT_V0` (kind 5) spec
+    // entries. The pre-14 `@stellar/stellar-sdk` rejected any wasm whose
+    // `contractspecv0` section held one with:
+    //   "XDR Read Error: unknown ScSpecEntryKind member for value 5".
+    // This self-contained 81-byte wasm is the 8-byte header + a single
+    // `contractspecv0` custom section holding
+    //   [ScSpecEntryFunctionV0 "noop", ScSpecEntryEventV0 "evt"]
+    // and leaks nothing from any real project.
+    const EVENT_SPEC_WASM = Buffer.from(
+      'AGFzbQEAAAAARw5jb250cmFjdHNwZWN2MAAAAAAAAAAAAAAABG5vb3AAAAAAAAAAAAAAAAUAAAAAAAAAAAAAAANldnQAAAAAAAAAAAAAAAAA',
+      'base64',
+    );
+
+    it('parses a spec containing a kind-5 event entry without throwing and exposes the function', async () => {
+      const eventSpec = await loadContractSpec(EVENT_SPEC_WASM);
+      assert.ok(
+        eventSpec.funcs().map((f) => f.name().toString()).includes('noop'),
+      );
+    });
+  });
+
   describe('substitute', () => {
     const ctx = {
       sourceAddress: 'GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57',

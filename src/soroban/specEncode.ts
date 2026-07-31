@@ -21,30 +21,18 @@
  * Pure aside from the in-memory wasm parse: no filesystem, no network.
  */
 
-import { contract, Networks, xdr } from '@stellar/stellar-sdk';
+import { contract, xdr } from '@stellar/stellar-sdk';
 import { encodeArgs, ScValArg } from './scval';
 
 export type Spec = contract.Spec;
 
 /**
- * A syntactically-valid placeholder contract id. `Client.fromWasm` requires a
- * well-formed id, but the parsed spec is independent of it — no live contract
- * is consulted.
- */
-const PLACEHOLDER_CONTRACT_ID = 'CA24HSVRERTJMFUDSZXKFK2HMO5CBBK6U5KA6PLLL6BGSQRO44FYZFRE';
-
-/**
- * Resolve a contract `Spec` from its wasm buffer, fully OFFLINE. The rpc url is
- * required by the signature but never contacted; the spec comes solely from the
- * wasm's `contractspecv0` custom section.
+ * Resolve a contract `Spec` from its wasm buffer, fully OFFLINE. `Spec.fromWasm`
+ * parses the wasm's `contractspecv0` custom section directly — no rpc endpoint
+ * and no contract id are involved.
  */
 export async function loadContractSpec(wasm: Buffer): Promise<Spec> {
-  const client = await contract.Client.fromWasm(wasm, {
-    rpcUrl: 'http://localhost',
-    networkPassphrase: Networks.STANDALONE,
-    contractId: PLACEHOLDER_CONTRACT_ID,
-  });
-  return client.spec;
+  return contract.Spec.fromWasm(wasm);
 }
 
 /**
