@@ -9,6 +9,7 @@ import {
 } from '@stellar/stellar-sdk';
 import { TurnkeyPipeline } from '../src/pipeline/TurnkeyPipeline';
 import { SorobanLaunchArgs } from '../src/debugAdapter/types';
+import { KometRpcError } from '../src/komet/KometClient';
 import { MockKometNode } from './support/mockKometNode';
 import { parseWasmSections } from '../src/wasm/sections';
 import { MemoryImage } from '../src/debugAdapter/MemoryImage';
@@ -140,6 +141,70 @@ describe('TurnkeyPipeline (against mock komet-node)', () => {
     assert.strictEqual(mock.calls('traceTransaction'), 1);
     assert.ok(resolved!.model.length > 0);
     assert.strictEqual(resolved!.model.length, trace.trim().split('\n').length);
+  });
+});
+
+describe('node.timeoutMs (configurable per-RPC timeout)', () => {
+  let mock: MockKometNode;
+  let port: number;
+  let trace: string;
+
+  before(async () => {
+    trace = await fs.readFile(TRACE, 'utf8');
+  });
+
+  afterEach(async () => {
+    if (mock) {
+      await mock.stop();
+    }
+  });
+
+  function run(timeoutMs: number) {
+    const pipeline = new TurnkeyPipeline();
+    return pipeline.run(
+      {
+        transactions: [
+          { kind: 'deploy', id: 'c', wasm: WASM },
+          {
+            kind: 'invoke',
+            contract: 'c',
+            function: 'add',
+            args: [
+              { value: 5, type: 'u32' },
+              { value: 6, type: 'u32' },
+            ],
+          },
+        ],
+        node: { attach: true, host: '127.0.0.1', port, timeoutMs },
+      } as unknown as SorobanLaunchArgs,
+      () => undefined,
+    );
+  }
+
+  it('aborts a per-RPC call when node.timeoutMs is smaller than the response delay', async () => {
+    // The mock delays every sendTransaction by 200ms; a 20ms per-RPC timeout must
+    // abort the first delayed send (seeding the account) well before it returns.
+    mock = new MockKometNode({ trace, delayMethod: 'sendTransaction', delayMs: 200 });
+    port = await mock.start();
+
+    await assert.rejects(
+      () => run(20),
+      (e: unknown) => {
+        assert.ok(e instanceof KometRpcError);
+        assert.match((e as Error).message, /failed/);
+        return true;
+      },
+    );
+  });
+
+  it('lets the full sequence complete when node.timeoutMs is generous', async () => {
+    // Same per-send delay, but a 5s timeout is far above the 200ms delay, so every
+    // RPC completes and the pipeline resolves a replayable trace.
+    mock = new MockKometNode({ trace, delayMethod: 'sendTransaction', delayMs: 200 });
+    port = await mock.start();
+
+    const resolved = await run(5000);
+    assert.ok(resolved.model.length > 0);
   });
 });
 

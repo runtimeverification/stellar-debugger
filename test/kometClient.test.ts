@@ -9,7 +9,7 @@ import { KometClient, KometRpcError } from '../src/komet/KometClient';
  * the parsed request body and returns `{ status?, body }`; `body` is sent as
  * JSON (or as a raw string when a string is returned).
  */
-type Responder = (msg: any) => { status?: number; body: unknown };
+type Responder = (msg: any) => { status?: number; body: unknown; delayMs?: number };
 
 class StubServer {
   private server?: http.Server;
@@ -22,9 +22,16 @@ class StubServer {
       req.on('data', (c) => (raw += c));
       req.on('end', () => {
         const msg = raw ? JSON.parse(raw) : {};
-        const { status = 200, body } = this.respond(msg);
-        res.writeHead(status, { 'content-type': 'application/json' });
-        res.end(typeof body === 'string' ? body : JSON.stringify(body));
+        const { status = 200, body, delayMs } = this.respond(msg);
+        const write = () => {
+          res.writeHead(status, { 'content-type': 'application/json' });
+          res.end(typeof body === 'string' ? body : JSON.stringify(body));
+        };
+        if (delayMs != null) {
+          setTimeout(write, delayMs);
+        } else {
+          write();
+        }
       });
     });
     await new Promise<void>((resolve) => this.server!.listen(0, '127.0.0.1', resolve));
@@ -90,6 +97,19 @@ describe('KometClient', () => {
     const port = await tmp.start();
     await tmp.stop();
     const client = new KometClient({ host: '127.0.0.1', port, timeoutMs: 1000 });
+    await assert.rejects(() => client.getHealth(), (e: unknown) => {
+      assert.ok(e instanceof KometRpcError);
+      assert.match((e as Error).message, /failed/);
+      return true;
+    });
+  });
+
+  it('throws KometRpcError when a response exceeds timeoutMs', async () => {
+    // The server delays its reply past the client's small per-RPC timeout, so the
+    // request must abort and surface a KometRpcError.
+    server = new StubServer((msg) => ({ body: { jsonrpc: '2.0', id: msg.id, result: { status: 'healthy' } }, delayMs: 200 }));
+    const port = await server.start();
+    const client = new KometClient({ host: '127.0.0.1', port, timeoutMs: 20 });
     await assert.rejects(() => client.getHealth(), (e: unknown) => {
       assert.ok(e instanceof KometRpcError);
       assert.match((e as Error).message, /failed/);

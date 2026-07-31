@@ -153,7 +153,7 @@ work in path fields like `contract` and `wasm`.
 | `transactions` | The ordered live sequence (required for live mode). |
 | `trace` | Which transaction to debug (see [`trace`](#trace)). |
 | `sourceSecret` | Source account secret (`S…`) used to sign every transaction. A deterministic account is derived and self-seeded if omitted; its address is available as `${sourceAddress}`. |
-| `node` | Local-network connection/spawn settings: `attach`, `host`, `port`, `command`, `ioDir`. |
+| `node` | Local-network connection/spawn settings: `attach`, `host`, `port`, `command`, `ioDir`, and `timeoutMs` (per-RPC timeout, default 10 min — raise it for very large contracts that take longer to upload or execute). |
 | `rawTrace` | Replay mode: path to a recorded JSONL trace to replay instead of running a live sequence. |
 | `wasmPath` | Replay mode only: a `.wasm` supplying disassembly and DWARF source mapping for the replayed trace. |
 

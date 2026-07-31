@@ -150,6 +150,11 @@
                   "ioDir": {
                     "type": "string",
                     "description": "Directory for komet-node's I/O artifacts (--io-dir). Defaults to a fresh temp dir."
+                  },
+                  "timeoutMs": {
+                    "type": "number",
+                    "markdownDescription": "Per-RPC timeout in milliseconds before a komet-node request is aborted. Defaults to 600000 (10 minutes); raise it for very large contracts that take longer to upload or execute.",
+                    "default": 600000
                   }
                 },
                 "default": {}

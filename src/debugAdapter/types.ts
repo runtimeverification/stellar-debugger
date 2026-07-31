@@ -34,6 +34,12 @@ export interface SorobanLaunchArgs extends DebugProtocol.LaunchRequestArguments 
     command?: string;
     /** Directory komet-node uses for its I/O artifacts (`--io-dir`). */
     ioDir?: string;
+    /**
+     * Per-RPC timeout in milliseconds before a komet-node request is aborted.
+     * Defaults to 10 minutes; raise it for very large contracts that take
+     * longer to upload/execute.
+     */
+    timeoutMs?: number;
   };
   /** Optional source account secret; a fresh account is seeded if omitted. */
   sourceSecret?: string;

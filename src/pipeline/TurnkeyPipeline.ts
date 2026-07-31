@@ -24,6 +24,11 @@ import { SequenceRunner } from './SequenceRunner';
 
 const HEALTH_TIMEOUT_MS = 60_000;
 
+// Generous per-RPC default: large contracts can take minutes for komet-node to
+// parse into KORE, and the old 60s aborted them mid-flight, surfacing to the
+// user as a confusing "operation was cancelled".
+const DEFAULT_RPC_TIMEOUT_MS = 600_000;
+
 export class TurnkeyPipeline {
   private process?: KometProcess;
 
@@ -47,7 +52,7 @@ export class TurnkeyPipeline {
       this.process.start(report);
     }
 
-    const client = new KometClient({ host, port });
+    const client = new KometClient({ host, port, timeoutMs: args.node?.timeoutMs ?? DEFAULT_RPC_TIMEOUT_MS });
     report(`Waiting for komet-node at ${client.url} ...`);
     await client.waitForHealthy(HEALTH_TIMEOUT_MS);
 
