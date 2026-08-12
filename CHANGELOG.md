@@ -25,6 +25,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - New contributor spec: [`docs/state-inspection.md`](docs/state-inspection.md),
   whose numbered rules (G1–G4, L1–L15) the test suite pins.
 
+### Changed
+
+- The cross-contract gate no longer relies on komet-node tagging each trace
+  record with the contract executing at it. The adapter folds that out of the
+  `callContract`/`endWasm` boundaries the trace already carries, so the gate
+  works against any komet-node — including versions that never sent the tag, and
+  the coming ones that stop sending it.
+
 ### Fixed
 
 - Debug sessions start ~6 seconds faster: rendering Stellar addresses no longer

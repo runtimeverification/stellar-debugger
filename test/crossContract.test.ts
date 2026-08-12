@@ -1,24 +1,23 @@
 /**
- * Red anchor for the M3 cross-contract gate (minimal).
+ * The cross-contract gate (M3), and the derivation it rests on.
  *
- * komet now stamps every trace record with `executingContract` — the contract
- * whose code is executing. A traced transaction's records include the ROOT
- * contract plus cross-contract sub-calls (an oracle, a token, ...). The adapter
- * builds its disassembly + DWARF from ONLY the root contract's wasm, so a
- * sub-call's small `pos` values collide with the root's low code offsets and get
- * mis-mapped to bogus source lines. The minimal fix makes foreign records
- * INVISIBLE (validated position -> null) so they are neither shown nor
- * mis-mapped, while staying backward-compatible with traces that carry no tag.
+ * A traced transaction's records include the ROOT contract plus cross-contract
+ * sub-calls (an oracle, a token, ...). The adapter builds its disassembly +
+ * DWARF from ONLY the root contract's wasm, so a sub-call's small `pos` values
+ * collide with the root's low code offsets and get mis-mapped to bogus source
+ * lines. The fix makes foreign records INVISIBLE (validated position -> null) so
+ * they are neither shown nor mis-mapped, while leaving traces that carry no call
+ * boundaries untouched.
  *
- * Two pieces of not-yet-existing behaviour this file pins:
- *   1. src/komet/trace.ts — TraceRecord gains `executingContract?: string|null`;
- *      toTraceRecord/parseTraceJsonl parse the field (string/null kept, absent ->
- *      undefined, anything else -> TraceParseError).
- *   2. src/debugAdapter/artifacts.ts — validatedPositions(model, disassembly)
- *      gains a cross-contract gate: with a derived root (the first non-empty
- *      string tag), any record tagged with a DIFFERENT contract validates to
- *      null regardless of pos/mnemonic; untagged/null-tagged records are never
- *      filtered.
+ * Which contract a record executes in is DERIVED here, from the `callContract`
+ * and `endWasm` events the trace already carries — komet-node no longer stamps
+ * an `executingContract` field onto each served record. Two things this file
+ * pins:
+ *   1. src/komet/executingContract.ts — the fold itself, including that a
+ *      `callContract` record belongs to the callee it opens and an `endWasm`
+ *      record to the callee it closes.
+ *   2. src/debugAdapter/artifacts.ts — validatedPositions gates any record whose
+ *      derived contract differs from the root's.
  *
  * `nop` is used throughout: normalizeMnemonic(['nop']) === 'nop' and
  * renderInstr(['nop']) === 'nop', so it round-trips through Disassembly.fromTrace
@@ -27,8 +26,10 @@
  */
 
 import * as assert from 'assert';
-import { toTraceRecord, parseTraceJsonl, TraceParseError, TraceRecord } from '../src/komet/trace';
+import { toTraceRecord, TraceRecord } from '../src/komet/trace';
+import { executingContracts } from '../src/komet/executingContract';
 import { validatedPositions } from '../src/debugAdapter/artifacts';
+import { LedgerImage } from '../src/debugAdapter/LedgerImage';
 import { TraceModel } from '../src/debugAdapter/TraceModel';
 import { Disassembly } from '../src/wasm/Disassembly';
 
@@ -36,24 +37,34 @@ import { Disassembly } from '../src/wasm/Disassembly';
 const A = 'a'.repeat(64);
 const B = 'b'.repeat(64);
 
-/** The executingContract tag of a record. */
-function tagOf(rec: TraceRecord): string | null | undefined {
-  return rec.executingContract;
+/** A single-`nop` instruction record at code offset `pos`. */
+function nopAt(pos: number | null): TraceRecord {
+  return toTraceRecord({ pos, instr: ['nop'], stack: [], locals: {} }, 1);
 }
 
-// Sentinel distinguishing "no executingContract key" from an explicit null tag.
-const ABSENT = Symbol('absent');
+/** A `callContract` boundary opening a call into `to`. */
+function callInto(to: string, depth = 1): TraceRecord {
+  return toTraceRecord(
+    {
+      pos: null,
+      instr: ['callContract'],
+      from: { type: 'address', addrType: 'account', value: 'f'.repeat(64) },
+      to: { type: 'address', addrType: 'contract', value: to },
+      function: 'f',
+      args: [],
+      depth,
+      storage: [],
+    },
+    1,
+  );
+}
 
-/**
- * A single-`nop` record at code offset `pos`, optionally tagged with an
- * executingContract. Built as a plain object (partial record) and cast.
- */
-function nopAt(pos: number | null, contract: string | null | typeof ABSENT = ABSENT): TraceRecord {
-  const base: Record<string, unknown> = { pos, instr: ['nop'], stack: [], locals: {} };
-  if (contract !== ABSENT) {
-    base.executingContract = contract;
-  }
-  return base as unknown as TraceRecord;
+/** An `endWasm` boundary closing the innermost open call. */
+function endCall(success = true, depth = 1): TraceRecord {
+  return toTraceRecord(
+    { pos: null, instr: ['endWasm'], success, depth, result: { type: 'void' } },
+    1,
+  );
 }
 
 /** Validated positions of a model against its own trace-derived disassembly. */
@@ -64,102 +75,128 @@ function positionsOf(...records: TraceRecord[]): (number | null)[] {
   return validatedPositions(model, Disassembly.fromTrace(model));
 }
 
-describe('trace: executingContract parsing', () => {
-  const rec = (extra: Record<string, unknown>): unknown => ({
-    pos: 10,
-    instr: ['nop'],
-    stack: [],
-    locals: {},
-    ...extra,
+describe('executingContracts: derivation from call boundaries', () => {
+  it('attributes a callContract record to the callee it opens', () => {
+    assert.deepStrictEqual(executingContracts([callInto(A), nopAt(10)]), [A, A]);
   });
 
-  it('keeps a string executingContract', () => {
-    assert.strictEqual(tagOf(toTraceRecord(rec({ executingContract: A }), 1)), A);
+  it('attributes an endWasm record to the callee it closes, then returns to the caller', () => {
+    const contracts = executingContracts([
+      callInto(A),
+      callInto(B, 2),
+      nopAt(10),
+      endCall(true, 2),
+      nopAt(20),
+    ]);
+    assert.deepStrictEqual(contracts, [A, B, B, B, A]);
   });
 
-  it('keeps a null executingContract as null', () => {
-    assert.strictEqual(tagOf(toTraceRecord(rec({ executingContract: null }), 1)), null);
+  it('pops on a trapped endWasm exactly as on a successful one', () => {
+    const contracts = executingContracts([
+      callInto(A),
+      callInto(B, 2),
+      endCall(false, 2),
+      nopAt(10),
+    ]);
+    assert.deepStrictEqual(contracts, [A, B, B, A]);
   });
 
-  it('leaves an absent executingContract undefined', () => {
-    assert.strictEqual(tagOf(toTraceRecord(rec({}), 1)), undefined);
+  it('reports null before the first call and for a trace with no boundaries', () => {
+    assert.deepStrictEqual(executingContracts([nopAt(10), nopAt(20)]), [null, null]);
+    assert.deepStrictEqual(executingContracts([nopAt(10), callInto(A)]), [null, A]);
   });
 
-  it('throws TraceParseError when executingContract is a number', () => {
-    assert.throws(() => toTraceRecord(rec({ executingContract: 123 }), 1), TraceParseError);
+  it('leaves a root call that never closes open to the end of the trace', () => {
+    assert.deepStrictEqual(executingContracts([callInto(A), nopAt(10), nopAt(20)]), [A, A, A]);
   });
 
-  it('parseTraceJsonl carries executingContract through', () => {
-    const [parsed] = parseTraceJsonl(JSON.stringify(rec({ executingContract: A })));
-    assert.strictEqual(tagOf(parsed), A);
+  it('tolerates an unmatched endWasm rather than underflowing', () => {
+    assert.deepStrictEqual(executingContracts([endCall(), nopAt(10)]), [null, null]);
+  });
+
+  it('keeps sibling root-level calls separate', () => {
+    const contracts = executingContracts([callInto(A), endCall(), callInto(B), endCall()]);
+    assert.deepStrictEqual(contracts, [A, A, B, B]);
+  });
+});
+
+describe('executingContracts: agrees with LedgerImage', () => {
+  // Both answer "which contract is executing here" — this fold per record, and
+  // LedgerImage off its richer call-frame stack for the Ledger view. They must
+  // not drift, so the same trace is put through both, boundary records included.
+  it('matches executingContractAt at every record of a nested trace', () => {
+    const records = [
+      nopAt(null),
+      callInto(A),
+      nopAt(10),
+      callInto(B, 2),
+      nopAt(20),
+      endCall(false, 2),
+      nopAt(30),
+      endCall(true, 1),
+      nopAt(40),
+    ];
+    const derived = executingContracts(records);
+    const image = new LedgerImage(records);
+    for (let i = 0; i < records.length; i++) {
+      assert.strictEqual(derived[i], image.executingContractAt(i) ?? null, `record ${i}`);
+    }
   });
 });
 
 describe('artifacts: validatedPositions cross-contract gate', () => {
   it('nulls a foreign sub-call record even though its pos validates', () => {
-    // root = A; r2 is a foreign B record sharing r0's pos (the collision the
+    // root = A; the B record shares the first A record's pos (the collision the
     // bug mis-maps). Only the gate can null it — its pos+mnemonic validate.
     const positions = positionsOf(
-      nopAt(10, A),
-      nopAt(20, A),
-      nopAt(10, B),
-      nopAt(30, A),
+      callInto(A),
+      nopAt(10),
+      nopAt(20),
+      callInto(B, 2),
+      nopAt(10),
+      endCall(true, 2),
+      nopAt(30),
     );
-    assert.deepStrictEqual(positions, [10, 20, null, 30]);
+    assert.deepStrictEqual(positions, [null, 10, 20, null, null, null, 30]);
   });
 
-  it('backward-compat: without executingContract the gate is inert', () => {
-    // The SAME four positions, untagged: nothing is filtered.
+  it('backward-compat: with no call boundaries the gate is inert', () => {
+    // The same positions in a trace carrying no events: nothing is filtered.
     const positions = positionsOf(nopAt(10), nopAt(20), nopAt(10), nopAt(30));
     assert.deepStrictEqual(positions, [10, 20, 10, 30]);
   });
 
-  it('derives the root from the first NON-null tag, sparing earlier null-tagged records', () => {
-    // r0 is tagged null (no root established yet) so it is never filtered; r1
-    // establishes root = A; the foreign r2 is nulled.
+  it('spares records ahead of the first call, which have no contract yet', () => {
+    // The leading record precedes any callContract, so it is never filtered;
+    // the call establishes root = A and the foreign B record is nulled.
     const positions = positionsOf(
-      nopAt(10, null),
-      nopAt(20, A),
-      nopAt(10, B),
-      nopAt(30, A),
+      nopAt(10),
+      callInto(A),
+      nopAt(20),
+      callInto(B, 2),
+      nopAt(10),
+      endCall(true, 2),
+      nopAt(30),
     );
-    assert.deepStrictEqual(positions, [10, 20, null, 30]);
+    assert.deepStrictEqual(positions, [10, null, 20, null, null, null, 30]);
   });
 
   it('nulls every foreign record across a nested A -> B -> A return', () => {
-    // A, A, B, B, A: the two B records are nulled, the three A records kept.
     const positions = positionsOf(
-      nopAt(10, A),
-      nopAt(20, A),
-      nopAt(30, B),
-      nopAt(40, B),
-      nopAt(50, A),
-    );
-    assert.deepStrictEqual(positions, [10, 20, null, null, 50]);
-  });
-
-  it('passes a single-contract trace (every record tagged root) through unchanged', () => {
-    // Every record is the root A: nothing is foreign, so validation is unchanged.
-    const positions = positionsOf(nopAt(10, A), nopAt(20, A), nopAt(30, A));
-    assert.deepStrictEqual(positions, [10, 20, 30]);
-  });
-
-  it("treats an empty-string tag as 'no contract' — never gated, symmetric with the root search", () => {
-    // root = A (first NON-empty tag). r1's '' is not a contract id, so it is
-    // spared (kept), exactly as the root search skips ''. The B record is gated.
-    const positions = positionsOf(nopAt(10, A), nopAt(20, ''), nopAt(30, B), nopAt(40, A));
-    assert.deepStrictEqual(positions, [10, 20, null, 40]);
-  });
-
-  it('establishes the root from the first non-empty tag even several records in', () => {
-    // r0 null, r1 absent, r2 establishes root A; the later B record is gated.
-    const positions = positionsOf(
-      nopAt(10, null),
+      callInto(A),
+      nopAt(10),
       nopAt(20),
-      nopAt(30, A),
-      nopAt(10, B),
-      nopAt(40, A),
+      callInto(B, 2),
+      nopAt(30),
+      nopAt(40),
+      endCall(true, 2),
+      nopAt(50),
     );
-    assert.deepStrictEqual(positions, [10, 20, 30, null, 40]);
+    assert.deepStrictEqual(positions, [null, 10, 20, null, null, null, null, 50]);
+  });
+
+  it('passes a single-contract trace through unchanged', () => {
+    const positions = positionsOf(callInto(A), nopAt(10), nopAt(20), nopAt(30));
+    assert.deepStrictEqual(positions, [null, 10, 20, 30]);
   });
 });

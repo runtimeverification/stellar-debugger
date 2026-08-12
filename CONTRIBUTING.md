@@ -139,6 +139,8 @@ komet/
   trace.ts              JSONL -> TraceRecord[] (K-style mnemonics, section-relative pos)
   traceEvents.ts        Soroban VM event payloads -> TraceEvent (tolerant: a
                         malformed/unknown payload degrades, never throws)
+  executingContract.ts  per-record executing contract, folded from the trace's
+                        callContract/endWasm boundaries (feeds the gate above)
   mnemonics.ts          K-style instr arrays -> wasm mnemonics ('i64.const 255')
   KometClient.ts        JSON-RPC client (getHealth/sendTransaction/traceTransaction/...)
 soroban/scval.ts        launch args -> ScVals (@stellar/stellar-sdk)

@@ -96,12 +96,6 @@ export interface TraceRecord {
    */
   mem?: MemRun[];
   /**
-   * The contract whose code is executing at this record (komet's per-record
-   * tag). Used to gate cross-contract records against the root contract's
-   * disassembly/DWARF — see debugAdapter/artifacts.ts. Absent in older traces.
-   */
-  executingContract?: string | null;
-  /**
    * The typed payload of a Soroban VM event record (storage write, contract-call
    * boundary, ledger baseline, host object allocation, …), or undefined for an
    * ordinary instruction record and for event tags this adapter does not model.
@@ -195,11 +189,6 @@ export function toTraceRecord(value: unknown, lineNo: number): TraceRecord {
     });
   }
 
-  const executingContract = obj.executingContract;
-  if (executingContract !== undefined && executingContract !== null && typeof executingContract !== 'string') {
-    throw new TraceParseError(`trace line ${lineNo}: 'executingContract' must be a string or null`);
-  }
-
   const instr = obj.instr as [string, ...unknown[]];
 
   return {
@@ -209,7 +198,6 @@ export function toTraceRecord(value: unknown, lineNo: number): TraceRecord {
     locals,
     globals,
     mem,
-    executingContract: executingContract as string | null | undefined,
     event: parseTraceEvent(obj, instr, lineNo),
   };
 }

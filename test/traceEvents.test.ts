@@ -161,8 +161,9 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
     assert.strictEqual(expectKind(voidResult.event, 'endWasm').result, null);
   });
 
-  // komet spells the trap-path exit marker `endWasm-error`; komet-node's
-  // executingContract annotation treats any `endWasm`-prefixed tag as an exit.
+  // Some komet builds spell the trap-path exit marker `endWasm-error`; it is the
+  // same exit, so it parses to an `endWasm` event and closes the call like any
+  // other (see komet/executingContract.ts).
   it('treats an endWasm-error tag as a failed call exit', () => {
     const rec = toTraceRecord(
       { pos: null, instr: ['endWasm-error'], success: false, depth: 1, result: null },

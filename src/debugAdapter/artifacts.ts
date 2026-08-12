@@ -14,9 +14,11 @@
  * transaction interleaves the ROOT contract with cross-contract sub-calls
  * (an oracle, a token, ...), yet the disassembly and DWARF are built from
  * ONLY the root contract's wasm. A sub-call's small `pos` collides with the
- * root's low code offsets and would mis-map to bogus source, so records whose
- * `executingContract` differs from the root are made invisible (position ->
- * null). Records carrying no tag (older traces) are never gated.
+ * root's low code offsets and would mis-map to bogus source, so records
+ * executing in a contract other than the root are made invisible (position ->
+ * null). Which contract a record belongs to is derived from the trace's own
+ * call boundaries (komet/executingContract.ts); a trace carrying none leaves
+ * the gate inert.
  *
  * Missing or unreadable DWARF is NEVER fatal: the session degrades to a
  * NullSourceMapper (wasm-level debugging) with a note in the debug console.
@@ -31,6 +33,7 @@ import { DwarfLineTable } from '../dwarf/LineTable';
 import { DwarfParseError } from '../dwarf/cursor';
 import { WasmFormatError } from '../wasm/sections';
 import { normalizeMnemonic } from '../komet/mnemonics';
+import { executingContracts } from '../komet/executingContract';
 import { SourceMapper } from '../sourcemap/SourceMapper';
 import { DwarfSourceMapper } from '../sourcemap/DwarfSourceMapper';
 import { NullSourceMapper } from '../sourcemap/NullSourceMapper';
@@ -45,14 +48,15 @@ import { DwarfDebugInfo } from '../dwarf/DebugInfo';
  * check alone. Everything else (null pos, mid-instruction offsets, records
  * from other sections' address spaces) maps to null.
  *
- * A cross-contract gate runs first: the root contract is the `executingContract`
- * of the first record carrying a non-empty string tag, and any record tagged
- * with a DIFFERENT non-empty contract validates to null regardless of
- * pos/mnemonic. This is because a sub-call's `pos` collides with the root's
- * address space while the disassembly/DWARF here is the root contract's ONLY.
- * A tag that is undefined, null, or the empty string (older, untagged traces,
- * or an untagged host frame) is treated as "no contract" and never gated — the
- * empty string is spared symmetrically in both the root search and the gate.
+ * A cross-contract gate runs first: each record's executing contract is derived
+ * from the trace's call boundaries, the root is the first one that resolves to a
+ * contract, and any record executing in a DIFFERENT contract validates to null
+ * regardless of pos/mnemonic. This is because a sub-call's `pos` collides with
+ * the root's address space while the disassembly/DWARF here is the root
+ * contract's ONLY. A record with no open call (the ledger baseline and anything
+ * else ahead of the first `callContract`, or every record of a trace that
+ * carries no call boundaries at all) is treated as "no contract" and never
+ * gated, which is what keeps older, event-less traces working unchanged.
  *
  * The gate assumes the supplied `disassembly` is the trace ROOT contract's wasm
  * — true by construction in the live pipeline (`tracedWasm` is the invoked,
@@ -61,13 +65,11 @@ import { DwarfDebugInfo } from '../dwarf/DebugInfo';
  * error, no worse than the pre-gate mis-mapping.
  */
 export function validatedPositions(model: TraceModel, disassembly: Disassembly): (number | null)[] {
-  const rootRecord = model.records.find(
-    (rec) => typeof rec.executingContract === 'string' && rec.executingContract !== '',
-  );
-  const root = rootRecord ? (rootRecord.executingContract as string) : null;
-  return model.records.map((rec) => {
-    // A truthy tag is a non-empty contract id; '', null, undefined are "no contract".
-    if (root !== null && rec.executingContract && rec.executingContract !== root) {
+  const contracts = executingContracts(model.records);
+  const root = contracts.find((contract) => contract !== null) ?? null;
+  return model.records.map((rec, i) => {
+    const contract = contracts[i];
+    if (root !== null && contract !== null && contract !== root) {
       return null;
     }
     if (rec.pos === null) {
