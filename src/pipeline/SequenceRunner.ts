@@ -1,11 +1,8 @@
 /**
- * The generalized sequence runner: execute a canonical `{ steps, trace }`
- * (produced by `normalizeConfig`) as an ordered sequence of transactions against
- * one accumulating komet-node ledger, then resolve the traced tx into a
- * replayable `ResolvedTrace`.
- *
- * This generalizes the fixed 4-step `TurnkeyPipeline` into an arbitrary
- * `TxStep[]`, keeping the same acquisition flow per contract:
+ * The sequence runner: execute a canonical `{ steps, trace }` (produced by
+ * `normalizeConfig`) as an ordered sequence of transactions against one
+ * accumulating komet-node ledger, then resolve the traced tx into a replayable
+ * `ResolvedTrace`.
  *
  *   seed source (CreateAccount) ->
  *   per deploy: load wasm -> strip debug sections -> upload -> create contract
@@ -14,7 +11,7 @@
  *   fetch the TRACED step's trace by hash -> toTraceRecords -> TraceModel ->
  *   buildDebugArtifacts -> ResolvedTrace.
  *
- * Two behaviors this runner guarantees over the old pipeline (spec blockers):
+ * Two behaviors the runner guarantees:
  *   1. It NEVER throws on a FAILED tx. Every step runs, each tx's status is
  *      reported to the debug console, and the traced step's trace is fetched
  *      regardless of its status — a reverting tx stays debuggable.
@@ -145,13 +142,7 @@ export class SequenceRunner {
     const trace = await this.client.traceTransaction(traced.hash);
 
     const model = new TraceModel(toTraceRecords(trace));
-    const { source: sourceMapper, variables, disassembly, positions } = buildDebugArtifacts(
-      traced.wasm,
-      model,
-      report,
-    );
-
-    return { model, source: sourceMapper, variables, disassembly, positions };
+    return { model, ...buildDebugArtifacts(traced.wasm, model, report) };
   }
 
   /** Upload + create a contract, registering its handle. */

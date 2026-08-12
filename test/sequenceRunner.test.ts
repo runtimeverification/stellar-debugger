@@ -1,20 +1,15 @@
 /**
- * M3 acceptance tests: the sequence runner core, exercised against the MOCK
- * komet-node (test/support/mockKometNode.ts) — NO real komet-node, NO network.
+ * The sequence runner core, exercised against the MOCK komet-node
+ * (test/support/mockKometNode.ts) — NO real komet-node, NO network.
  *
- * Pins the "M3 acceptance" section of the spec. A `SequenceRunner` executes a
- * normalized `{ steps, trace }` (produced by M1 `normalizeConfig`) against a
- * `KometClient`, reusing the reference flow in `src/pipeline/TurnkeyPipeline.ts`
- * (seed source -> per deploy: upload + create -> per invoke: build + send ->
- * fetch the traced tx's trace -> `buildDebugArtifacts`), and returns a
- * `ResolvedTrace`.
- *
- * The runner does not yet exist — this suite is the TDD red phase and imports
- * `src/pipeline/SequenceRunner.ts` on purpose. The contract these tests pin:
+ * A `SequenceRunner` executes a normalized `{ steps, trace }` (from
+ * `normalizeConfig`) against a `KometClient` — seed source -> per deploy: upload
+ * + create -> per invoke: build + send -> fetch the traced tx's trace ->
+ * `buildDebugArtifacts` — and returns a `ResolvedTrace`:
  *
  *   const runner = new SequenceRunner(new KometClient({ host, port }));
  *   const resolved = await runner.run(
- *     normalizeConfig(raw),          // { steps, trace } from M1
+ *     normalizeConfig(raw),          // { steps, trace }
  *     { sourceSecret? },             // deterministic source options
  *     report,                        // progress reporter
  *   );
@@ -156,7 +151,7 @@ function deepEqual(a: unknown, b: unknown): boolean {
   }
 }
 
-describe('M3 sequenceRunner', () => {
+describe('SequenceRunner', () => {
   let mocks: MockKometNode[] = [];
 
   afterEach(async () => {

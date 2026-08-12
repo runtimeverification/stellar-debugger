@@ -2,12 +2,13 @@ import * as assert from 'assert';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import {
+  Keypair,
   Networks,
   TransactionBuilder,
   scValToNative,
   xdr,
 } from '@stellar/stellar-sdk';
-import { TurnkeyPipeline } from '../src/pipeline/TurnkeyPipeline';
+import { LiveBackend } from '../src/debugAdapter/backends/LiveBackend';
 import { SorobanLaunchArgs } from '../src/debugAdapter/types';
 import { KometRpcError } from '../src/komet/KometClient';
 import { MockKometNode } from './support/mockKometNode';
@@ -20,7 +21,11 @@ const FIXTURES = path.join(__dirname, '..', '..', 'test', 'fixtures');
 const WASM = path.join(FIXTURES, 'sample_contract.wasm');
 const TRACE = path.join(FIXTURES, 'add.trace.jsonl');
 
-describe('TurnkeyPipeline (against mock komet-node)', () => {
+// A deterministic source secret so the explicit-`sourceSecret` branch is
+// exercised without randomness.
+const FIXED_SECRET = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 7)).secret();
+
+describe('LiveBackend (against mock komet-node)', () => {
   let mock: MockKometNode;
   let port: number;
   let trace: string;
@@ -39,8 +44,8 @@ describe('TurnkeyPipeline (against mock komet-node)', () => {
   });
 
   function run() {
-    const pipeline = new TurnkeyPipeline();
-    return pipeline.run(
+    const pipeline = new LiveBackend();
+    return pipeline.resolve(
       {
         transactions: [
           { kind: 'deploy', id: 'c', wasm: WASM },
@@ -68,6 +73,26 @@ describe('TurnkeyPipeline (against mock komet-node)', () => {
     // then one trace fetched by hash.
     assert.strictEqual(mock.envelopes('sendTransaction').length, 4);
     assert.strictEqual(mock.calls('traceTransaction'), 1);
+  });
+
+  it('signs the sequence with an explicit sourceSecret, and dispose() is a no-op in attach mode', async () => {
+    const backend = new LiveBackend();
+    const resolved = await backend.resolve(
+      {
+        transactions: [
+          { kind: 'deploy', id: 'c', wasm: WASM },
+          { kind: 'invoke', contract: 'c', function: 'add', args: { a: 5, b: 6 } },
+        ],
+        sourceSecret: FIXED_SECRET,
+        node: { attach: true, host: '127.0.0.1', port },
+      } as unknown as SorobanLaunchArgs,
+      () => undefined,
+    );
+
+    assert.ok(resolved.model.length > 0);
+    assert.strictEqual(mock.calls('traceTransaction'), 1);
+    // No process was spawned in attach mode, so teardown must not throw.
+    await backend.dispose();
   });
 
   it('replays an array trace with interleaved Soroban VM events', async () => {
@@ -119,9 +144,9 @@ describe('TurnkeyPipeline (against mock komet-node)', () => {
   });
 
   it('keeps a FAILED invocation debuggable: no throw, trace still fetched', async () => {
-    // A reverting tx must stay debuggable: TurnkeyPipeline (via SequenceRunner)
+    // A reverting tx must stay debuggable: LiveBackend (via SequenceRunner)
     // NEVER throws on a FAILED status and fetches the traced step's trace
-    // regardless of status (see the module doc and the M3 no-throw test).
+    // regardless of status (see the module doc and sequenceRunner.test.ts).
     await mock.stop();
     mock = new MockKometNode({ trace, traceStatus: 'FAILED' });
     port = await mock.start();
@@ -157,8 +182,8 @@ describe('node.timeoutMs (configurable per-RPC timeout)', () => {
   });
 
   function run(timeoutMs: number) {
-    const pipeline = new TurnkeyPipeline();
-    return pipeline.run(
+    const pipeline = new LiveBackend();
+    return pipeline.resolve(
       {
         transactions: [
           { kind: 'deploy', id: 'c', wasm: WASM },
@@ -202,14 +227,14 @@ describe('node.timeoutMs (configurable per-RPC timeout)', () => {
   });
 });
 
-// End-to-end through the LIVE backend (TurnkeyPipeline) against a mock node, on the
+// End-to-end through the LIVE backend against a mock node, on the
 // DWARF-bearing `increment` contract and a real komet trace with per-step memory:
 //   - the wasm uploaded to the node is DEBUG-STRIPPED (the perf fix — komet-node does
 //     not need DWARF; carrying it bloated the KORE config ~3x and timed out the RPC
 //     path), while the FULL DWARF wasm still drives source + variable resolution;
 //   - a shadow-stack (memory-backed) Rust variable is inspected and reads its value.
 // This runs with no real node, so it is deterministic and always-on.
-describe('TurnkeyPipeline debug-strip + memory-backed variable inspection', () => {
+describe('LiveBackend debug-strip + memory-backed variable inspection', () => {
   const INCR_WASM = path.join(FIXTURES, 'increment-debug.wasm');
   const INCR_TRACE = path.join(FIXTURES, 'increment-debug.trace.jsonl');
   let mock: MockKometNode;
@@ -224,8 +249,8 @@ describe('TurnkeyPipeline debug-strip + memory-backed variable inspection', () =
   });
 
   async function runIncrement() {
-    const pipeline = new TurnkeyPipeline();
-    return pipeline.run(
+    const pipeline = new LiveBackend();
+    return pipeline.resolve(
       {
         transactions: [
           { kind: 'deploy', id: 'c', wasm: INCR_WASM },

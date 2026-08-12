@@ -1,14 +1,14 @@
 /**
  * Builds the per-session debug artifacts — a SourceMapper, a Disassembly, and
  * the per-record validated positions — from the contract wasm and the parsed
- * trace. Shared by every backend that has wasm bytes in hand (TurnkeyPipeline,
- * RawTraceBackend with `wasmPath`).
+ * trace. Shared by every backend that has wasm bytes in hand (the live pipeline,
+ * and RawTraceBackend when given a `wasmPath`).
  *
  * Also home of per-record position validation: komet's `pos` is ambiguous
  * across sections (global-initializer records carry offsets relative to the
- * *globals* section payload, in the same numeric range as code offsets — M0
- * ground truth), so a record's `pos` is only trusted when its instruction
- * matches the static disassembly at that code offset.
+ * *globals* section payload, in the same numeric range as code offsets), so a
+ * record's `pos` is only trusted when its instruction matches the static
+ * disassembly at that code offset.
  *
  * Position validation also enforces a cross-contract gate. A traced
  * transaction interleaves the ROOT contract with cross-contract sub-calls
@@ -27,13 +27,12 @@
  */
 
 import { TraceModel } from './TraceModel';
-import { ProgressReporter } from './types';
+import { DebugArtifacts, ProgressReporter } from './types';
 import { Disassembly } from '../wasm/Disassembly';
 import { DwarfLineTable } from '../dwarf/LineTable';
 import { DwarfParseError } from '../dwarf/cursor';
 import { WasmFormatError } from '../wasm/sections';
 import { normalizeMnemonic } from '../komet/mnemonics';
-import { SourceMapper } from '../sourcemap/SourceMapper';
 import { DwarfSourceMapper } from '../sourcemap/DwarfSourceMapper';
 import { NullSourceMapper } from '../sourcemap/NullSourceMapper';
 import { VariableResolver, NullVariableResolver, DwarfVariableResolver } from '../sourcemap/VariableResolver';
@@ -103,7 +102,7 @@ export function buildDebugArtifacts(
   wasm: Uint8Array,
   model: TraceModel,
   report: ProgressReporter,
-): { source: SourceMapper; variables: VariableResolver; disassembly: Disassembly; positions: (number | null)[] } {
+): DebugArtifacts {
   let disassembly: Disassembly;
   try {
     disassembly = Disassembly.fromWasm(wasm);
@@ -112,38 +111,55 @@ export function buildDebugArtifacts(
       `Warning: could not read the contract wasm (${errorMessage(err)}); ` +
         'showing trace-derived instructions without source mapping.',
     );
-    // The trace-derived disassembly is built from the records' own `pos`
-    // values, so the raw positions are self-consistent with it by construction
-    // (there is no independent ground truth to validate against).
-    return {
-      source: new NullSourceMapper(),
-      variables: new NullVariableResolver(),
-      disassembly: Disassembly.fromTrace(model),
-      positions: model.records.map((rec) => rec.pos),
-    };
+    return traceDerivedArtifacts(model);
   }
-  const positions = validatedPositions(model, disassembly);
 
+  const positions = validatedPositions(model, disassembly);
+  const table = readLineTable(wasm, report);
+  const source =
+    table === null ? new NullSourceMapper() : new DwarfSourceMapper(model, table, positions);
+  return { source, variables: resolveVariables(wasm, report), disassembly, positions };
+}
+
+/**
+ * The wasm-less fallback: instructions rendered from the trace itself, no source
+ * mapping. The trace-derived disassembly is built from the records' own `pos`
+ * values, so the raw positions are self-consistent with it by construction
+ * (there is no independent ground truth to validate against).
+ */
+export function traceDerivedArtifacts(model: TraceModel): DebugArtifacts {
+  return {
+    source: new NullSourceMapper(),
+    variables: new NullVariableResolver(),
+    disassembly: Disassembly.fromTrace(model),
+    positions: model.records.map((rec) => rec.pos),
+  };
+}
+
+/**
+ * The wasm's DWARF line table, or null when there is nothing usable — no debug
+ * sections, no rows, or debug info this parser rejects. Only a malformed-input
+ * error degrades; anything else is a bug and propagates.
+ */
+function readLineTable(wasm: Uint8Array, report: ProgressReporter): DwarfLineTable | null {
   let table: DwarfLineTable | null;
   try {
     table = DwarfLineTable.fromWasm(wasm);
   } catch (err) {
-    if (err instanceof DwarfParseError || err instanceof WasmFormatError) {
-      report(
-        `Warning: could not parse the wasm's DWARF debug info (${errorMessage(err)}); ` +
-          'debugging continues at the wasm level.',
-      );
-      return { source: new NullSourceMapper(), variables: resolveVariables(wasm, report), disassembly, positions };
+    if (!(err instanceof DwarfParseError || err instanceof WasmFormatError)) {
+      throw err;
     }
-    throw err;
+    report(
+      `Warning: could not parse the wasm's DWARF debug info (${errorMessage(err)}); ` +
+        'debugging continues at the wasm level.',
+    );
+    return null;
   }
   if (table === null || table.entries.length === 0) {
     report('Note: the contract wasm carries no DWARF line info; debugging continues at the wasm level.');
-    return { source: new NullSourceMapper(), variables: resolveVariables(wasm, report), disassembly, positions };
+    return null;
   }
-
-  const source = new DwarfSourceMapper(model, table, positions);
-  return { source, variables: resolveVariables(wasm, report), disassembly, positions };
+  return table;
 }
 
 /**
