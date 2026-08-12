@@ -38,8 +38,12 @@ npm run build        # bundle to dist/extension.js (esbuild)
 npm run watch        # rebuild on change
 npm run check-types  # tsc --noEmit
 npm run lint         # eslint
-npm test             # tsc -p tsconfig.test.json, then mocha (~2 min)
+npm test             # recompile src+test to out/, then mocha (~4 min)
 ```
+
+`npm test` clears `out/` before compiling: `tsc` leaves the output of a deleted
+or renamed source behind, and a stale `out/test/*.test.js` keeps being collected
+by mocha long after its source is gone.
 
 Press **F5** (*Run Extension*) to open an Extension Development Host with the
 extension loaded and the [`examples/`](examples/) workspace open. Pick a
@@ -59,15 +63,23 @@ configs need no toolchain at all.
 ### Regenerating fixtures
 
 The DWARF/trace fixtures under `test/fixtures/` are real build + trace outputs
-and must stay matched (the wasm's DWARF and the trace's positions are checked
-against each other). Regenerate them **as a pair**:
+and must stay matched: a trace's `pos` values are byte offsets into that exact
+wasm, so a wasm and its trace only mean anything **as a pair**. One script
+rebuilds every pair and re-checks each one:
 
 ```bash
-scripts/make-fixtures.sh          # rebuild the debug wasms + capture matching traces
-node scripts/verify-addresses.mjs # re-derive the address-space ground truth vs a live komet-node
+scripts/make-fixtures.sh   # build the debug wasms, capture matching traces, verify
 ```
 
-These need the full toolchain (Rust + Stellar CLI + komet-node).
+It needs the full toolchain (Rust + Stellar CLI + komet-node). Under the hood:
+
+- `scripts/capture-trace.mjs --wasm … --function … --args-json '{"a":1}'` runs one
+  contract call through the real pipeline and writes the node's records verbatim,
+  so a fixture keeps its `kind` tags, VM event payloads, memory and globals.
+- `scripts/verify-addresses.mjs --wasm … --trace …` re-derives the address
+  convention the whole debugger rests on (komet's `pos`, the DWARF line
+  addresses and the disassembly all being code-section-payload-relative, with no
+  delta). Worth running on its own after a komet-node or rustc upgrade.
 
 ## How it works
 
@@ -125,9 +137,14 @@ feeds the DWARF/disassembly seams).
 ```
 extension.ts            VSCode glue: config provider + inline adapter factory
 debugAdapter/
-  SorobanDebugSession   DAP handlers (cursor moves + StoppedEvents, disassembly)
-  TraceModel            records, cursor, call-depth, line + instruction stepping
-  artifacts.ts          wasm bytes -> { mapper, disassembly, validated positions }
+  SorobanDebugSession   the DAP conversation and nothing else: each request is
+                        one call into the modules below plus an event
+  stopModel.ts          a trace's stop points: validated positions, visible
+                        records, call depths, statement stops (shared with the CLI)
+  replayCursor.ts       the stepping engine — every forward/reverse move and the
+                        breakpoint resolution, as cursor moves over a StopModel
+  stops.ts              the pure derivations stopModel is built from (depths,
+                        line runs, S17/S18/S21 stop filtering)
   TraceModel            records + replay cursor; owns the two state images below,
                         built lazily and shared by every consumer
   MemoryImage           linear memory at a cursor (snapshot-on-change index)
@@ -135,17 +152,27 @@ debugAdapter/
                         ledger info, host objects, call stack, and the executing
                         contract; undoes the writes of a trapped sub-call
                         (docs/state-inspection.md)
-  ledgerView.ts         the ledger presentation both views share: one snapshot
-                        per stop, rendered as a lazy ChildVar tree for DAP
+  artifacts.ts          wasm bytes -> { mapper, disassembly, validated positions }
+  ledgerView.ts         the ledger presentation both front ends share: one
+                        snapshot per stop, as a lazy ChildVar tree
+  wasmView.ts           the Locals / Value Stack / Globals scopes, same shape
+  disassemblyView.ts    the Disassembly View rows for one window of addresses
   backends/
     RawTraceBackend     replay a JSONL trace file (+ optional wasmPath for symbols)
-    LiveBackend         turnkey build + spawn + deploy + trace
+    LiveBackend         turnkey build + spawn + deploy + trace (config + runner
+                        from pipeline/)
 komet/
   trace.ts              JSONL -> TraceRecord[] (K-style mnemonics, section-relative pos)
   traceEvents.ts        Soroban VM event payloads -> TraceEvent (a malformed or
                         unknown payload degrades to no event, never fails a session)
   mnemonics.ts          K-style instr arrays -> wasm mnemonics ('i64.const 255')
   KometClient.ts        JSON-RPC client (getHealth/sendTransaction/traceTransaction/...)
+  KometProcess.ts       spawns/stops the node as a process group
+pipeline/
+  config.ts             launch config -> canonical { steps, trace } (validated)
+  SequenceRunner.ts     runs that sequence against one accumulating ledger, then
+                        resolves the traced tx into a ResolvedTrace
+cli/                    the argv tokenizer + exit-code shell both CLIs share
 soroban/specEncode.ts   invoke args -> ScVals, encoded against the contract's own
                         contractspecv0 spec; `${...}` substitution
 soroban/scvalJson.ts    trace ScVal JSON -> DecodedValue (display + lazy children)

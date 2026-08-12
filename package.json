@@ -5,6 +5,14 @@
   "version": "0.0.1",
   "publisher": "runtimeverification",
   "license": "BSD-3-Clause",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/runtimeverification/stellar-debugger.git"
+  },
+  "bugs": {
+    "url": "https://github.com/runtimeverification/stellar-debugger/issues"
+  },
+  "homepage": "https://github.com/runtimeverification/stellar-debugger#readme",
   "engines": {
     "vscode": "^1.85.0",
     "node": ">=22"
@@ -227,11 +235,13 @@
     "watch": "node esbuild.js --watch",
     "check-types": "tsc --noEmit",
     "lint": "eslint src --ext ts",
-    "pretest": "tsc -p tsconfig.test.json",
+    "clean": "node -e \"require('fs').rmSync('out',{recursive:true,force:true})\"",
+    "compile-tests": "npm run clean && tsc -p tsconfig.test.json",
+    "pretest": "npm run compile-tests",
     "test": "mocha",
-    "precoverage": "tsc -p tsconfig.test.json",
+    "precoverage": "npm run compile-tests",
     "coverage": "c8 mocha",
-    "precoverage:ci": "tsc -p tsconfig.test.json",
+    "precoverage:ci": "npm run compile-tests",
     "coverage:ci": "c8 --check-coverage --lines 92 --branches 87 --functions 96 mocha",
     "mutation": "stryker run"
   },

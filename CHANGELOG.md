@@ -80,7 +80,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - DWARF type resolution no longer hangs on malformed debug info containing a
   cyclic `typedef`/qualifier chain; `stripTypedefs` now terminates on cycles.
 
-[Unreleased]: https://github.com/runtimeverification/simbolik-komet/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/runtimeverification/stellar-debugger/compare/v0.0.1...HEAD
 
 ## [0.0.1]
 
@@ -89,4 +89,4 @@ Rust source-level and WebAssembly stepping (forward and backward), state
 inspection, a one-click build-deploy-debug pipeline, and offline replay of
 recorded runs.
 
-[0.0.1]: https://github.com/runtimeverification/simbolik-komet/releases/tag/v0.0.1
+[0.0.1]: https://github.com/runtimeverification/stellar-debugger/releases/tag/v0.0.1
