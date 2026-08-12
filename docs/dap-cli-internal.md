@@ -54,10 +54,10 @@ returns `{ port, close }`, where `close()` shuts the server down.
   over the wire still tears down the `LiveBackend`'s `komet-node` subprocess. The
   `disposed` guard makes the second call after a clean disconnect a harmless no-op.
 
-## Session constructor change — `src/debugAdapter/SorobanDebugSession.ts`
+## The session's two constructor forms — `src/debugAdapter/SorobanDebugSession.ts`
 
-`SorobanDebugSession` accepts **either** a concrete `SessionBackend` (unchanged; used by
-the extension and the stdio test harness) **or** a selector
+`SorobanDebugSession` accepts **either** a concrete `SessionBackend` (used by the
+extension and the stdio test harness) **or** a selector
 `(args: SorobanLaunchArgs) => SessionBackend`, resolved on the first line of
 `launchRequest` (the backend is unused before then). The TCP server passes the selector
 so the backend can depend on the per-connection launch config, which only arrives with

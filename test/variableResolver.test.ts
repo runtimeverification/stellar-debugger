@@ -124,7 +124,7 @@ describe('sourcemap/VariableResolver', () => {
       // so the resolved value IS the content of wasm local N. Both params are the
       // Soroban `Val` newtype (an 8-byte scalar), so the decoded display must equal
       // the decimal string of local N as carried by this trace record — the headline
-      // M8 capability: inspecting a variable's real runtime value.
+      // Inspecting a variable's real runtime value.
       const vars = resolver.variablesInScope(addPc);
       assert.strictEqual(vars.length, 2, 'expected exactly the two parameters');
       for (const v of vars) {

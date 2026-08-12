@@ -1,7 +1,6 @@
 /**
  * Unit suite for the serializable single-stop projection
- * (docs/trace-cli-internal.md, "projectSourceStop"). The module under test does not
- * exist yet — this is the red anchor for it.
+ * (docs/trace-cli-internal.md, "projectSourceStop").
  *
  *   projectSourceStop(resolved, stopModel, index, opts): SourceStop
  *     from src/trace/projectStop.ts

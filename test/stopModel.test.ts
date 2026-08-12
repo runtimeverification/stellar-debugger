@@ -4,16 +4,14 @@
  * src/debugAdapter/stopModel.ts are the single source of truth the CLI and the
  * DAP session both build on, so they can never disagree about where a "stop" is:
  *
- *   buildStopModel(resolved): StopModel — derives, exactly as
- *     SorobanDebugSession.launchRequest did inline, the validatedPosToIndices
+ *   buildStopModel(resolved): StopModel — derives the validatedPosToIndices
  *     map, visibleIndices, per-record depths, the raw line-run starts, the
  *     statement-granularity runStarts (post S17/S18), and the first/last stop
  *     points.
  *   pcAtIndex(positions, index) — the current-PC rule: the validated code
  *     offset at `index`, or the nearest EARLIER record that has one, else null.
  *
- * Values are pinned to the verified ground-truth fixtures. The module does not
- * exist yet, so this is the red anchor for it.
+ * Values are pinned to the verified ground-truth fixtures.
  */
 
 import * as assert from 'assert';

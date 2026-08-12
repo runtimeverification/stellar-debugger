@@ -5,7 +5,7 @@
  * them. test/dapStepping.test.ts pins the same rules end-to-end over the DAP
  * adapter; this file pins them at the lowest level that exhibits them.
  *
- * Pinned M8 API (implementation to be written against these tests):
+ * The API these tests pin:
  *
  *   src/debugAdapter/stops.ts (pure, vscode-free):
  *     computeDepths(records, positions, functionRanges?): number[]

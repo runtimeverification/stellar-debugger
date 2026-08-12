@@ -2,7 +2,7 @@
  * Resolves DWARF type DIEs into a small, debugger-friendly `DwarfType` model.
  *
  * A `TypeRegistry` is built over the global `dieByOffset` map produced by
- * `parseDebugInfo` (M2) and turns a section offset into a structured type on
+ * `parseDebugInfo` and turns a section offset into a structured type on
  * demand. Resolution is **one level deep**: composite types (structs, arrays,
  * pointers, …) carry the *offsets* of their referenced types rather than the
  * resolved types themselves. This keeps `resolve` non-recursive — so a type that

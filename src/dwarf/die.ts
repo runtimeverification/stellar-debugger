@@ -10,7 +10,7 @@
  * `secOffset` of its target — so both CU-relative and cross-CU (`ref_addr`)
  * references resolve by a single `dieByOffset` lookup.
  *
- * Attribute decoding is delegated entirely to `readForm` (M1); this module only
+ * Attribute decoding is delegated entirely to `readForm` (dwarf/forms); this module only
  * walks the tree structure. Pure module (no `vscode` imports, no external deps).
  */
 

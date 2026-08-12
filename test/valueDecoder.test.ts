@@ -34,7 +34,7 @@ import {
 } from '../src/dwarf/constants';
 
 // --- Tiny constructors for hand-built in-memory DIEs (as in typeRegistry.test.ts). ---
-// We build `Die` literals directly (the shape M2's parseDebugInfo produces), index
+// We build `Die` literals directly (the shape parseDebugInfo produces), index
 // them by secOffset, and resolve the type via TypeRegistry — then feed the resolved
 // type plus a mock RuntimeState to decodeValue.
 
@@ -91,7 +91,7 @@ function newState(memSize = 8192): MockState {
     localValue: (i) => locals.get(i),
     globalValue: (i) => globals.get(i),
     stackValue: (i) => stacks.get(i),
-    // NOTE: the M6 prerequisite widens readMemory to (address, size).
+    // NOTE: readMemory takes (address, size).
     readMemory: (addr, size) =>
       addr >= 0 && size >= 0 && addr + size <= mem.length ? mem.slice(addr, addr + size) : undefined,
   };

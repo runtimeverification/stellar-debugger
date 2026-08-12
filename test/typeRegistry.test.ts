@@ -42,8 +42,8 @@ const FIXTURES = path.join(__dirname, '..', '..', 'test', 'fixtures');
 const ADDER_WASM = path.join(FIXTURES, 'adder-debug.wasm');
 
 // --- Tiny constructors for hand-built in-memory DIEs and their attributes. ---
-// M3 tests need no byte encoding: we build `Die` literals directly (the shape
-// M2's parseDebugInfo produces) and a `dieByOffset` map keyed by secOffset, then
+// These tests need no byte encoding: we build `Die` literals directly (the shape
+// parseDebugInfo produces) and a `dieByOffset` map keyed by secOffset, then
 // assert TypeRegistry.resolve output.
 
 const uint = (value: number): AttrValue => ({ kind: 'uint', value });

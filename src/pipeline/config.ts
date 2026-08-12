@@ -12,7 +12,8 @@
  *
  * This is a PURE function: no filesystem, no network, no mutation of its input.
  * It performs NO wasm loading and NO arg encoding — invoke `args` are carried
- * through untouched (later milestones encode them).
+ * through untouched, for `soroban/specEncode` to encode against the deployed
+ * contract's own spec once the sequence runs.
  */
 
 /** A deploy step: upload + create, registering a handle `id -> contractId`. */
@@ -43,9 +44,9 @@ export interface InvokeStep {
    */
   id?: string;
   /**
-   * A named object keyed by spec param names, OR the positional
-   * `{type,value}[]` encoding. This is an arg ENCODING choice, not a legacy
-   * format. Carried through verbatim at this milestone (no encoding yet).
+   * Arguments as authored: an object keyed by the spec's parameter names. Carried
+   * through verbatim — `soroban/specEncode` encodes them against the deployed
+   * contract's own spec, which this module has no access to.
    */
   args?: unknown;
 }

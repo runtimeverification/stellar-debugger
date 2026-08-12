@@ -71,10 +71,6 @@ export class SorobanTxBuilder {
    * Seed an account. komet-node maps CreateAccount to its `setAccount` step.
    * The source is the account itself (self-seed) because the node boots from an
    * empty state with no pre-funded genesis account.
-   *
-   * OPEN QUESTION (verify against a live node): whether the source of the first
-   * CreateAccount must already exist. If so, a pre-seeded state fixture is
-   * needed instead.
    */
   buildCreateAccount(account: Keypair, startingBalance = '100000000'): string {
     const builder = this.newBuilder(account).addOperation(
@@ -98,7 +94,7 @@ export class SorobanTxBuilder {
   buildCreateContract(source: Keypair, wasmHash: Buffer, salt: Buffer): CreateContractResult {
     const builder = this.newBuilder(source).addOperation(
       Operation.createCustomContract({
-        address: addressFromPublicKey(source.publicKey()),
+        address: Address.fromString(source.publicKey()),
         wasmHash,
         salt,
       }),
@@ -113,8 +109,4 @@ export class SorobanTxBuilder {
     const builder = this.newBuilder(source).addOperation(contract.call(fn, ...args));
     return this.finish(builder, source);
   }
-}
-
-function addressFromPublicKey(publicKey: string): Address {
-  return Address.fromString(publicKey);
 }

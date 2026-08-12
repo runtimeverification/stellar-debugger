@@ -2,7 +2,7 @@
  * Display rendering and identity for `ScVal`s **as the trace encodes them**
  * (komet's `ScVal2JSON`: `{ type, value }`, see `komet/traceEvents.ts`).
  *
- * This is the inverse direction of `soroban/scval.ts`, which encodes launch
+ * This is the inverse direction of `soroban/specEncode.ts`, which encodes launch
  * arguments into `ScVal`s for submission. Here a decoded ledger value has to be
  * shown to a user, so the output is a `DecodedValue` — the very shape the DWARF
  * value decoder produces — which lets both consumers reuse their existing

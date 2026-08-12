@@ -43,15 +43,14 @@ All modules below are pure (no `vscode`, no DAP wire I/O) and unit-testable.
 
 Selects the trace-acquisition backend from launch args: `args.rawTrace` present →
 `RawTraceBackend` (offline replay of a JSONL trace, symbol-rich when `wasmPath` is
-also given), else `LiveBackend` (the full build→komet-node→trace pipeline). Extracted
-verbatim from the inline selector previously in `extension.ts`; reused by the extension,
-the TCP server, and the CLI. Reads only `args.rawTrace`, so it needs no `vscode`.
+also given), else `LiveBackend` (the full build→komet-node→trace pipeline). Reused by
+the extension, the TCP server, and the CLI; it reads only `args.rawTrace`, so it needs
+no `vscode`.
 
 ### `buildStopModel(resolved): StopModel` — `src/debugAdapter/stopModel.ts`
 
 The single source of truth for a trace's stop points, so the IDE and the CLI can never
-disagree about where a "stop" is. Given a `ResolvedTrace` it derives, exactly as
-`SorobanDebugSession.launchRequest` did inline:
+disagree about where a "stop" is. Given a `ResolvedTrace` it derives:
 
 ```ts
 interface StopModel {
@@ -81,7 +80,7 @@ Composition (unchanged): `computeDepths(records, positions, disassembly.function
 
 The current-PC rule the session uses: the validated code offset at `index`, or the
 nearest *earlier* record that has one, else `null`. Keeps variable scope aligned
-between IDE and CLI. Extracted from `SorobanDebugSession.currentPc`.
+between IDE and CLI.
 
 ### `projectSourceStop(resolved, stopModel, index, opts): SourceStop` — `src/trace/projectStop.ts`
 

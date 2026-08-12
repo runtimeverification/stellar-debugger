@@ -1,6 +1,6 @@
 /**
  * Unit suite for the pure argv parser behind the one-shot trace CLI
- * (`soroban-trace`), milestone M3 (CLI devex: --help + argument validation).
+ * (`soroban-trace`): --help and argument validation.
  *
  *   parseTraceArgs(argv): TraceParse   from src/trace/cliArgs.ts
  *   TRACE_USAGE: string                the help text
@@ -9,8 +9,6 @@
  * exits. It maps a raw argv slice onto a discriminated union describing what
  * the (coverage-excluded) main.ts shell should do: show help, report a usage
  * error, or run with a resolved launch + projection options.
- *
- * These modules do not export this API yet, so this is the red anchor for it.
  */
 
 import * as assert from 'assert';
@@ -34,7 +32,7 @@ function asHelp(p: TraceParse): string {
   return (p as Extract<TraceParse, { kind: 'help' }>).text;
 }
 
-describe('parseTraceArgs (M3 CLI devex)', () => {
+describe('parseTraceArgs', () => {
   describe('help', () => {
     it('--help → kind "help" with the usage text', () => {
       const text = asHelp(parseTraceArgs(['--help']));

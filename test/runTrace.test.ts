@@ -1,7 +1,6 @@
 /**
  * Unit suite for the one-shot CLI trace projection
- * (docs/trace-cli-internal.md, "Interface 1 — one-shot CLI"). The module under test
- * does not exist yet — this is the red anchor for it.
+ * (docs/trace-cli-internal.md, "Interface 1 — one-shot CLI").
  *
  *   runCliTrace(resolved, opts): string[]  from src/trace/runTrace.ts
  *

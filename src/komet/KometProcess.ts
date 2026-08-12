@@ -1,11 +1,11 @@
 /**
  * Spawns and manages a komet-node process for the turnkey backend.
  *
- * Launch command defaults to `komet-node` (the binary kup puts on PATH).
- * Traces are not requested at launch any more — they are fetched per
- * transaction via the `traceTransaction` RPC. The process is health-checked via
- * the JSON-RPC `getHealth` method (see KometClient.waitForHealthy) before the
- * pipeline proceeds.
+ * Launch command defaults to `komet-node` (the binary kup puts on PATH). The
+ * node is started with no tracing flags — a trace is fetched per transaction via
+ * the `traceTransaction` RPC — and is health-checked via the JSON-RPC
+ * `getHealth` method (see KometClient.waitForHealthy) before the pipeline
+ * proceeds.
  *
  * Pure module (uses child_process, no `vscode` imports).
  */
@@ -34,7 +34,7 @@ export class KometProcess {
     this.port = opts.port ?? 8000;
   }
 
-  /** Spawn the node with tracing enabled. Does not wait for health. */
+  /** Spawn the node. Does not wait for it to become healthy. */
   start(report: ProgressReporter): void {
     const base = this.opts.command ?? 'komet-node';
     const args = [

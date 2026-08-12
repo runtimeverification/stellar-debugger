@@ -6,8 +6,7 @@
  *   args.rawTrace present → RawTraceBackend (offline JSONL replay)
  *   otherwise             → LiveBackend (build → komet-node → trace pipeline)
  *
- * It reads only args.rawTrace, so it needs no vscode. The module does not exist
- * yet, so this is the red anchor for it.
+ * It reads only args.rawTrace, so it needs no vscode.
  */
 
 import * as assert from 'assert';
