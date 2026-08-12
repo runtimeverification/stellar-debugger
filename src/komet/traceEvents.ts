@@ -158,7 +158,16 @@ export type TraceEvent =
 /** Deepest `ScVal` nesting validated; below this, structure is taken on trust. */
 const MAX_SCVAL_DEPTH = 64;
 
-const HEX = /^[0-9a-f]*$/;
+const EVEN_LENGTH_HEX = /^([0-9a-f]{2})*$/;
+
+/**
+ * Whether `v` is the lowercase, even-length hex the trace encodes raw bytes as
+ * (addresses, wasm hashes, memory runs). Shared with `trace.ts`, which applies
+ * the same rule to an instruction record's `mem` runs.
+ */
+export function isEvenLengthHex(v: unknown): v is string {
+  return typeof v === 'string' && EVEN_LENGTH_HEX.test(v);
+}
 
 type Obj = Record<string, unknown>;
 
@@ -166,172 +175,182 @@ function isObj(v: unknown): v is Obj {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
-function fail(lineNo: number, message: string): never {
-  throw new TraceParseError(`trace line ${lineNo}: ${message}`);
-}
-
-function reqInt(obj: Obj, key: string, lineNo: number, tag: string): number {
-  const v = obj[key];
-  if (typeof v !== 'number' || !Number.isFinite(v)) {
-    fail(lineNo, `${tag} event: '${key}' must be a number`);
-  }
-  return v;
-}
-
-function reqString(obj: Obj, key: string, lineNo: number, tag: string): string {
-  const v = obj[key];
-  if (typeof v !== 'string') {
-    fail(lineNo, `${tag} event: '${key}' must be a string`);
-  }
-  return v;
-}
-
-function reqHex(obj: Obj, key: string, lineNo: number, tag: string): string {
-  const v = reqString(obj, key, lineNo, tag);
-  if (!HEX.test(v) || v.length % 2 !== 0) {
-    fail(lineNo, `${tag} event: '${key}' must be an even-length lowercase-hex string`);
-  }
-  return v;
-}
-
-function reqBool(obj: Obj, key: string, lineNo: number, tag: string): boolean {
-  const v = obj[key];
-  if (typeof v !== 'boolean') {
-    fail(lineNo, `${tag} event: '${key}' must be a boolean`);
-  }
-  return v;
-}
-
-function reqDurability(value: unknown, lineNo: number, tag: string): Durability {
-  if (typeof value !== 'string' || !DURABILITIES.has(value)) {
-    fail(lineNo, `${tag} event: durability must be one of instance/persistent/temporary`);
-  }
-  return value as Durability;
-}
-
-/** Validate an address object down to `{ addrType, value }`. */
-function toAddress(value: unknown, lineNo: number, tag: string, what: string): TraceAddress {
-  if (!isObj(value)) {
-    fail(lineNo, `${tag} event: '${what}' must be an address object`);
-  }
-  const addrType = value.addrType;
-  if (addrType !== 'account' && addrType !== 'contract') {
-    fail(lineNo, `${tag} event: '${what}'.addrType must be "account" or "contract"`);
-  }
-  const raw = value.value;
-  if (typeof raw !== 'string' || !HEX.test(raw) || raw.length % 2 !== 0) {
-    fail(lineNo, `${tag} event: '${what}'.value must be an even-length lowercase-hex string`);
-  }
-  return { addrType, value: raw };
-}
-
-function reqAddress(obj: Obj, key: string, lineNo: number, tag: string): TraceAddress {
-  return toAddress(obj[key], lineNo, tag, key);
-}
-
 /**
- * Validate an `ScVal` object. Types this module knows the shape of are checked
- * exactly; any other type is accepted as long as it carries a `value`, so a new
- * komet `ScVal` renders generically instead of failing the session.
+ * Typed reader over one event record's fields, bound to the trace line and event
+ * kind so every rejection names them without the call sites having to. Each
+ * accessor states what the field must be; anything else throws
+ * `TraceParseError`. Nested objects are read through a child reader whose paths
+ * are prefixed (`accounts[0].account`), so an error points at the exact field.
  */
-function toScVal(value: unknown, lineNo: number, tag: string, what: string, depth = 0): ScValJson {
-  if (!isObj(value) || typeof value.type !== 'string') {
-    fail(lineNo, `${tag} event: '${what}' must be an ScVal object with a string 'type'`);
+class Fields {
+  constructor(
+    private readonly obj: Obj,
+    private readonly lineNo: number,
+    private readonly kind: string,
+    private readonly prefix = '',
+  ) {}
+
+  /** Reject this record, naming the trace line, the event kind, and `what`. */
+  fail(what: string, expectation: string): never {
+    throw new TraceParseError(
+      `trace line ${this.lineNo}: ${this.kind} event: '${this.prefix}${what}' ${expectation}`,
+    );
   }
-  const type = value.type;
-  if (type === 'void') {
-    return { type };
+
+  /** The raw value of a field, for the few checks that are not a type test. */
+  raw(key: string): unknown {
+    return this.obj[key];
   }
-  if (type === 'address') {
-    const address = toAddress(value, lineNo, tag, what);
-    return { type, addrType: address.addrType, value: address.value };
-  }
-  if (type === 'error') {
-    return {
-      type,
-      errType: reqString(value, 'errType', lineNo, tag),
-      code: reqInt(value, 'code', lineNo, tag),
-    };
-  }
-  if (value.value === undefined) {
-    fail(lineNo, `${tag} event: '${what}' of type "${type}" must carry a 'value'`);
-  }
-  if (depth < MAX_SCVAL_DEPTH) {
-    if (type === 'vec') {
-      if (!Array.isArray(value.value)) {
-        fail(lineNo, `${tag} event: '${what}' of type "vec" must carry an array 'value'`);
-      }
-      return {
-        type,
-        value: value.value.map((item, i) => toScVal(item, lineNo, tag, `${what}[${i}]`, depth + 1)),
-      };
+
+  int(key: string): number {
+    const v = this.obj[key];
+    if (typeof v !== 'number' || !Number.isFinite(v)) {
+      this.fail(key, 'must be a number');
     }
-    if (type === 'map') {
+    return v;
+  }
+
+  string(key: string): string {
+    const v = this.obj[key];
+    if (typeof v !== 'string') {
+      this.fail(key, 'must be a string');
+    }
+    return v;
+  }
+
+  hex(key: string): string {
+    const v = this.string(key);
+    if (!isEvenLengthHex(v)) {
+      this.fail(key, 'must be an even-length lowercase-hex string');
+    }
+    return v;
+  }
+
+  bool(key: string): boolean {
+    const v = this.obj[key];
+    if (typeof v !== 'boolean') {
+      this.fail(key, 'must be a boolean');
+    }
+    return v;
+  }
+
+  durability(key = 'durability'): Durability {
+    const v = this.obj[key];
+    if (typeof v !== 'string' || !DURABILITIES.has(v)) {
+      this.fail(key, 'must be one of instance/persistent/temporary');
+    }
+    return v as Durability;
+  }
+
+  address(key: string): TraceAddress {
+    return this.toAddress(this.obj[key], key);
+  }
+
+  scVal(key: string): ScValJson {
+    return this.toScVal(this.obj[key], key);
+  }
+
+  /** A JSON array of `ScVal`s; an absent key is an empty list. */
+  scVals(key: string): ScValJson[] {
+    return this.array(key).map((item, i) => this.toScVal(item, `${key}[${i}]`));
+  }
+
+  /** A `[{durability, key, value, liveUntil}]` array; absent means empty. */
+  storage(key: string): StorageEntry[] {
+    return this.objects(key).map((entry) => ({
+      durability: entry.durability(),
+      key: entry.scVal('key'),
+      value: entry.scVal('value'),
+      liveUntil: entry.int('liveUntil'),
+    }));
+  }
+
+  /** An array of objects, each as its own path-prefixed reader; absent means empty. */
+  objects(key: string): Fields[] {
+    return this.array(key).map((entry, i) => {
+      const path = `${key}[${i}]`;
+      if (!isObj(entry)) {
+        this.fail(path, 'must be an object');
+      }
+      return new Fields(entry, this.lineNo, this.kind, `${this.prefix}${path}.`);
+    });
+  }
+
+  private array(key: string): unknown[] {
+    const raw = this.obj[key] ?? [];
+    if (!Array.isArray(raw)) {
+      this.fail(key, 'must be an array');
+    }
+    return raw;
+  }
+
+  /** Validate an address object down to `{ addrType, value }`. */
+  private toAddress(value: unknown, what: string): TraceAddress {
+    if (!isObj(value)) {
+      this.fail(what, 'must be an address object');
+    }
+    const addrType = value.addrType;
+    if (addrType !== 'account' && addrType !== 'contract') {
+      this.fail(`${what}.addrType`, 'must be "account" or "contract"');
+    }
+    const raw = value.value;
+    if (!isEvenLengthHex(raw)) {
+      this.fail(`${what}.value`, 'must be an even-length lowercase-hex string');
+    }
+    return { addrType, value: raw };
+  }
+
+  /**
+   * Validate an `ScVal` object. Types this module knows the shape of are checked
+   * exactly; any other type is accepted as long as it carries a `value`, so a
+   * new komet `ScVal` renders generically instead of failing the session.
+   */
+  private toScVal(value: unknown, what: string, depth = 0): ScValJson {
+    if (!isObj(value) || typeof value.type !== 'string') {
+      this.fail(what, "must be an ScVal object with a string 'type'");
+    }
+    const type = value.type;
+    if (type === 'void') {
+      return { type };
+    }
+    if (type === 'address') {
+      const address = this.toAddress(value, what);
+      return { type, addrType: address.addrType, value: address.value };
+    }
+    if (type === 'error') {
+      const nested = new Fields(value, this.lineNo, this.kind, `${this.prefix}${what}.`);
+      return { type, errType: nested.string('errType'), code: nested.int('code') };
+    }
+    if (value.value === undefined) {
+      this.fail(what, `of type "${type}" must carry a 'value'`);
+    }
+    if (depth < MAX_SCVAL_DEPTH && (type === 'vec' || type === 'map')) {
       if (!Array.isArray(value.value)) {
-        fail(lineNo, `${tag} event: '${what}' of type "map" must carry an array 'value'`);
+        this.fail(what, `of type "${type}" must carry an array 'value'`);
+      }
+      if (type === 'vec') {
+        return {
+          type,
+          value: value.value.map((item, i) => this.toScVal(item, `${what}[${i}]`, depth + 1)),
+        };
       }
       return {
         type,
         value: value.value.map((entry, i) => {
           if (!Array.isArray(entry) || entry.length !== 2) {
-            fail(lineNo, `${tag} event: '${what}' map entry ${i} must be a [key, value] pair`);
+            this.fail(`${what}[${i}]`, 'must be a [key, value] pair');
           }
           return [
-            toScVal(entry[0], lineNo, tag, `${what}[${i}].key`, depth + 1),
-            toScVal(entry[1], lineNo, tag, `${what}[${i}].value`, depth + 1),
+            this.toScVal(entry[0], `${what}[${i}].key`, depth + 1),
+            this.toScVal(entry[1], `${what}[${i}].value`, depth + 1),
           ];
         }),
       };
     }
+    // Validated above: `type` is a string. Any other shape (a komet ScVal type
+    // this module does not model) passes through for generic rendering.
+    return { ...value, type } as ScValJson;
   }
-  // Validated above: `type` is a string. Any other shape (a komet ScVal type
-  // this module does not model) passes through for generic rendering.
-  return { ...value, type } as ScValJson;
-}
-
-function reqScVal(obj: Obj, key: string, lineNo: number, tag: string): ScValJson {
-  return toScVal(obj[key], lineNo, tag, key);
-}
-
-/** Validate a JSON array of `ScVal`s; an absent key is an empty list. */
-function scValList(obj: Obj, key: string, lineNo: number, tag: string): ScValJson[] {
-  const raw = obj[key] ?? [];
-  if (!Array.isArray(raw)) {
-    fail(lineNo, `${tag} event: '${key}' must be an array`);
-  }
-  return raw.map((item, i) => toScVal(item, lineNo, tag, `${key}[${i}]`));
-}
-
-/** Validate a `[{durability, key, value, liveUntil}]` storage array. */
-function storageList(obj: Obj, key: string, lineNo: number, tag: string): StorageEntry[] {
-  const raw = obj[key] ?? [];
-  if (!Array.isArray(raw)) {
-    fail(lineNo, `${tag} event: '${key}' must be an array`);
-  }
-  return raw.map((entry, i) => {
-    if (!isObj(entry)) {
-      fail(lineNo, `${tag} event: '${key}[${i}]' must be an object`);
-    }
-    return {
-      durability: reqDurability(entry.durability, lineNo, tag),
-      key: toScVal(entry.key, lineNo, tag, `${key}[${i}].key`),
-      value: toScVal(entry.value, lineNo, tag, `${key}[${i}].value`),
-      liveUntil: reqInt(entry, 'liveUntil', lineNo, tag),
-    };
-  });
-}
-
-function objectList(obj: Obj, key: string, lineNo: number, tag: string): Obj[] {
-  const raw = obj[key] ?? [];
-  if (!Array.isArray(raw)) {
-    fail(lineNo, `${tag} event: '${key}' must be an array`);
-  }
-  return raw.map((entry, i) => {
-    if (!isObj(entry)) {
-      fail(lineNo, `${tag} event: '${key}[${i}]' must be an object`);
-    }
-    return entry;
-  });
 }
 
 /**
@@ -344,42 +363,39 @@ function objectList(obj: Obj, key: string, lineNo: number, tag: string): Obj[] {
  * `kind` is the record's already-validated kind; `obj` is the raw record object,
  * which carries the event's own fields.
  */
-export function parseTraceEvent(
-  obj: Record<string, unknown>,
-  kind: string,
-  lineNo: number,
-): TraceEvent | undefined {
+export function parseTraceEvent(obj: Obj, kind: string, lineNo: number): TraceEvent | undefined {
+  const f = new Fields(obj, lineNo, kind);
   switch (kind) {
     case 'ledger':
       return {
         kind: 'ledger',
-        sequence: reqInt(obj, 'sequence', lineNo, kind),
-        timestamp: reqInt(obj, 'timestamp', lineNo, kind),
-        accounts: objectList(obj, 'accounts', lineNo, kind).map((entry) => ({
-          account: reqAddress(entry, 'account', lineNo, kind),
-          balance: reqInt(entry, 'balance', lineNo, kind),
+        sequence: f.int('sequence'),
+        timestamp: f.int('timestamp'),
+        accounts: f.objects('accounts').map((a) => ({
+          account: a.address('account'),
+          balance: a.int('balance'),
         })),
-        contracts: objectList(obj, 'contracts', lineNo, kind).map((entry) => ({
-          contract: reqAddress(entry, 'contract', lineNo, kind),
-          wasmHash: reqHex(entry, 'wasmHash', lineNo, kind),
-          liveUntil: reqInt(entry, 'liveUntil', lineNo, kind),
-          storage: storageList(entry, 'storage', lineNo, kind),
+        contracts: f.objects('contracts').map((c) => ({
+          contract: c.address('contract'),
+          wasmHash: c.hex('wasmHash'),
+          liveUntil: c.int('liveUntil'),
+          storage: c.storage('storage'),
         })),
-        codes: objectList(obj, 'codes', lineNo, kind).map((entry) => ({
-          hash: reqHex(entry, 'hash', lineNo, kind),
-          liveUntil: reqInt(entry, 'liveUntil', lineNo, kind),
+        codes: f.objects('codes').map((c) => ({
+          hash: c.hex('hash'),
+          liveUntil: c.int('liveUntil'),
         })),
       };
 
     case 'callContract':
       return {
         kind: 'callContract',
-        from: reqAddress(obj, 'from', lineNo, kind),
-        to: reqAddress(obj, 'to', lineNo, kind),
-        function: reqString(obj, 'function', lineNo, kind),
-        args: scValList(obj, 'args', lineNo, kind),
-        depth: reqInt(obj, 'depth', lineNo, kind),
-        storage: storageList(obj, 'storage', lineNo, kind),
+        from: f.address('from'),
+        to: f.address('to'),
+        function: f.string('function'),
+        args: f.scVals('args'),
+        depth: f.int('depth'),
+        storage: f.storage('storage'),
       };
 
     // One record closes a call whether it returned or trapped; `success` is what
@@ -387,105 +403,95 @@ export function parseTraceEvent(
     case 'endWasm':
       return {
         kind: 'endWasm',
-        success: reqBool(obj, 'success', lineNo, kind),
-        depth: reqInt(obj, 'depth', lineNo, kind),
-        result: obj.result === null || obj.result === undefined
-          ? null
-          : reqScVal(obj, 'result', lineNo, kind),
+        success: f.bool('success'),
+        depth: f.int('depth'),
+        result: f.raw('result') == null ? null : f.scVal('result'),
       };
 
     case 'contractData': {
-      const op = obj.operation;
+      const op = f.raw('operation');
       if (op !== 'put' && op !== 'del') {
         // A read (`get`/`has`), or an op a future producer adds: it moves
         // nothing, so the record parses as a plain one rather than throwing.
         return undefined;
       }
-      const args = scValList(obj, 'args', lineNo, kind);
-      if (args.length === 0) {
-        fail(lineNo, `${kind} event: '${op}' needs a key argument`);
+      const args = f.scVals('args');
+      if (args.length < (op === 'put' ? 2 : 1)) {
+        f.fail('args', op === 'put' ? 'needs a key and a value' : 'needs a key');
       }
-      if (op === 'put' && args.length < 2) {
-        fail(lineNo, `${kind} event: 'put' needs both a key and a value argument`);
-      }
-      const event: Extract<TraceEvent, { kind: 'contractData' }> = {
+      return {
         kind: 'contractData',
         op,
-        durability: reqDurability(obj.durability, lineNo, kind),
-        contract: reqAddress(obj, 'contract', lineNo, kind),
+        durability: f.durability(),
+        contract: f.address('contract'),
         key: args[0],
+        ...(op === 'put' ? { value: args[1] } : {}),
       };
-      if (op === 'put') {
-        event.value = args[1];
-      }
-      return event;
     }
 
-    case 'contractTtl': {
-      const target = obj.target;
-      if (target === 'data') {
-        return {
-          kind: 'contractTtl',
-          target,
-          contract: reqAddress(obj, 'contract', lineNo, kind),
-          durability: reqDurability(obj.durability, lineNo, kind),
-          key: reqScVal(obj, 'key', lineNo, kind),
-          liveUntil: reqInt(obj, 'liveUntil', lineNo, kind),
-        };
+    case 'contractTtl':
+      switch (f.raw('target')) {
+        case 'data':
+          return {
+            kind: 'contractTtl',
+            target: 'data',
+            contract: f.address('contract'),
+            durability: f.durability(),
+            key: f.scVal('key'),
+            liveUntil: f.int('liveUntil'),
+          };
+        case 'instance':
+          return {
+            kind: 'contractTtl',
+            target: 'instance',
+            contract: f.address('contract'),
+            liveUntil: f.int('liveUntil'),
+          };
+        case 'code':
+          return {
+            kind: 'contractTtl',
+            target: 'code',
+            hash: f.hex('hash'),
+            liveUntil: f.int('liveUntil'),
+          };
+        default:
+          return undefined;
       }
-      if (target === 'instance') {
-        return {
-          kind: 'contractTtl',
-          target,
-          contract: reqAddress(obj, 'contract', lineNo, kind),
-          liveUntil: reqInt(obj, 'liveUntil', lineNo, kind),
-        };
-      }
-      if (target === 'code') {
-        return {
-          kind: 'contractTtl',
-          target,
-          hash: reqHex(obj, 'hash', lineNo, kind),
-          liveUntil: reqInt(obj, 'liveUntil', lineNo, kind),
-        };
-      }
-      return undefined;
-    }
 
     case 'contractCode':
       return {
         kind: 'contractCode',
-        contract: reqAddress(obj, 'contract', lineNo, kind),
-        wasmHash: reqHex(obj, 'wasmHash', lineNo, kind),
+        contract: f.address('contract'),
+        wasmHash: f.hex('wasmHash'),
       };
 
     case 'deployContract':
       return {
         kind: 'deployContract',
-        contract: reqAddress(obj, 'contract', lineNo, kind),
-        wasmHash: reqHex(obj, 'wasmHash', lineNo, kind),
-        liveUntil: reqInt(obj, 'liveUntil', lineNo, kind),
+        contract: f.address('contract'),
+        wasmHash: f.hex('wasmHash'),
+        liveUntil: f.int('liveUntil'),
       };
 
     case 'account':
       return {
         kind: 'account',
-        account: reqAddress(obj, 'account', lineNo, kind),
-        balance: reqInt(obj, 'balance', lineNo, kind),
+        account: f.address('account'),
+        balance: f.int('balance'),
       };
 
     case 'ledgerInfo':
       return {
         kind: 'ledgerInfo',
-        sequence: reqInt(obj, 'sequence', lineNo, kind),
-        timestamp: reqInt(obj, 'timestamp', lineNo, kind),
+        sequence: f.int('sequence'),
+        timestamp: f.int('timestamp'),
       };
 
     case 'addObject':
       return {
         kind: 'addObject',
-        index: reqInt(obj, 'index', lineNo, kind),
-        value: reqScVal(obj, 'value', lineNo, kind),
+        index: f.int('index'),
+        value: f.scVal('value'),
       };
 
     default:

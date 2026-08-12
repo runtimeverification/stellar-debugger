@@ -57,7 +57,7 @@
  */
 
 import { TraceParseError } from './traceError';
-import { parseTraceEvent, TraceEvent } from './traceEvents';
+import { isEvenLengthHex, parseTraceEvent, TraceEvent } from './traceEvents';
 
 export { TraceParseError } from './traceError';
 export type {
@@ -126,20 +126,29 @@ function isTypedValue(v: unknown): v is TypedValue {
   return Array.isArray(v) && v.length === 2 && typeof v[0] === 'string';
 }
 
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
 /**
  * Validate and normalize a parsed JSON object into a TraceRecord. Throws on a
  * shape that does not match the documented contract so that a backend change is
  * caught loudly rather than silently mis-rendered.
  */
 export function toTraceRecord(value: unknown, lineNo: number): TraceRecord {
+  // Explicitly typed so TypeScript narrows on the never-returning call.
+  const reject: (message: string) => never = (message) => {
+    throw new TraceParseError(`trace line ${lineNo}: ${message}`);
+  };
+
   if (typeof value !== 'object' || value === null) {
-    throw new TraceParseError(`trace line ${lineNo}: expected an object`);
+    reject('expected an object');
   }
   const obj = value as Record<string, unknown>;
 
   const kind = obj.kind;
   if (typeof kind !== 'string' || kind === '') {
-    throw new TraceParseError(`trace line ${lineNo}: 'kind' must be a non-empty string`);
+    reject("'kind' must be a non-empty string");
   }
   const isInstruction = kind === 'instr';
 
@@ -147,84 +156,72 @@ export function toTraceRecord(value: unknown, lineNo: number): TraceRecord {
   // binary. An instruction record must state one, even if null.
   const pos = obj.pos ?? null;
   if (pos !== null && typeof pos !== 'number') {
-    throw new TraceParseError(`trace line ${lineNo}: 'pos' must be a number or null`);
+    reject("'pos' must be a number or null");
   }
   if (isInstruction && obj.pos === undefined) {
-    throw new TraceParseError(`trace line ${lineNo}: 'pos' is required on an instruction record`);
+    reject("'pos' is required on an instruction record");
   }
 
-  if (isInstruction && (!Array.isArray(obj.instr) || obj.instr.length === 0 || typeof obj.instr[0] !== 'string')) {
-    throw new TraceParseError(`trace line ${lineNo}: 'instr' must be a non-empty array starting with a string`);
+  const instr = obj.instr;
+  if (isInstruction && (!Array.isArray(instr) || instr.length === 0 || typeof instr[0] !== 'string')) {
+    reject("'instr' must be a non-empty array starting with a string");
   }
 
-  const rawStack = obj.stack ?? [];
-  if (!Array.isArray(rawStack) || !rawStack.every(isTypedValue)) {
-    throw new TraceParseError(`trace line ${lineNo}: 'stack' must be an array of [type, value] pairs`);
+  const stack = obj.stack ?? [];
+  if (!Array.isArray(stack) || !stack.every(isTypedValue)) {
+    reject("'stack' must be an array of [type, value] pairs");
   }
 
-  const rawLocals = obj.locals ?? {};
-  if (typeof rawLocals !== 'object' || rawLocals === null || Array.isArray(rawLocals)) {
-    throw new TraceParseError(`trace line ${lineNo}: 'locals' must be an object`);
-  }
-  const locals: Record<string, TypedValue> = {};
-  for (const [k, v] of Object.entries(rawLocals as Record<string, unknown>)) {
-    if (!isTypedValue(v)) {
-      throw new TraceParseError(`trace line ${lineNo}: local '${k}' must be a [type, value] pair`);
+  /** A `{ index: [type, value] }` map, as locals and globals are both encoded. */
+  const typedValueMap = (raw: unknown, what: string): Record<string, TypedValue> => {
+    if (!isPlainObject(raw)) {
+      reject(`'${what}' must be an object`);
     }
-    locals[k] = v;
-  }
-
-  let globals: Record<string, TypedValue> | undefined;
-  if (obj.globals !== undefined) {
-    const rawGlobals = obj.globals;
-    if (typeof rawGlobals !== 'object' || rawGlobals === null || Array.isArray(rawGlobals)) {
-      throw new TraceParseError(`trace line ${lineNo}: 'globals' must be an object`);
-    }
-    globals = {};
-    for (const [k, v] of Object.entries(rawGlobals as Record<string, unknown>)) {
+    for (const [slot, v] of Object.entries(raw)) {
       if (!isTypedValue(v)) {
-        throw new TraceParseError(`trace line ${lineNo}: global '${k}' must be a [type, value] pair`);
+        reject(`${what} '${slot}' must be a [type, value] pair`);
       }
-      globals[k] = v;
     }
-  }
-
-  // `mem` is a full sparse memory snapshot when present; `null` or an absent
-  // key both mean "unchanged since the previous snapshot" and leave it undefined.
-  let mem: MemRun[] | undefined;
-  if (obj.mem !== undefined && obj.mem !== null) {
-    if (!Array.isArray(obj.mem)) {
-      throw new TraceParseError(`trace line ${lineNo}: 'mem' must be an array or null`);
-    }
-    mem = obj.mem.map((entry, k) => {
-      if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
-        throw new TraceParseError(`trace line ${lineNo}: mem[${k}] must be an object`);
-      }
-      const { addr, bytes } = entry as Record<string, unknown>;
-      if (typeof addr !== 'number') {
-        throw new TraceParseError(`trace line ${lineNo}: mem[${k}].addr must be a number`);
-      }
-      if (typeof bytes !== 'string' || !/^[0-9a-f]*$/.test(bytes) || bytes.length % 2 !== 0) {
-        throw new TraceParseError(
-          `trace line ${lineNo}: mem[${k}].bytes must be an even-length lowercase-hex string`,
-        );
-      }
-      return { addr, bytes: new Uint8Array(Buffer.from(bytes, 'hex')) };
-    });
-  }
-
-  // A VM record has no instruction; it names itself, so `instr` is its kind.
-  const instr: [string, ...unknown[]] = isInstruction ? (obj.instr as [string, ...unknown[]]) : [kind];
+    return raw as Record<string, TypedValue>;
+  };
 
   return {
-    pos: pos as number | null,
-    instr,
-    stack: rawStack as TypedValue[],
-    locals,
-    globals,
-    mem,
+    pos,
+    // A VM record has no instruction; it names itself, so `instr` is its kind.
+    instr: isInstruction ? (instr as [string, ...unknown[]]) : [kind],
+    stack: stack as TypedValue[],
+    locals: typedValueMap(obj.locals ?? {}, 'local'),
+    globals: obj.globals === undefined ? undefined : typedValueMap(obj.globals, 'global'),
+    mem: toMemRuns(obj.mem, reject),
     event: eventOf(obj, kind, lineNo),
   };
+}
+
+/**
+ * A record's full sparse memory snapshot, hex decoded to bytes. `null` and an
+ * absent key both mean "unchanged since the previous snapshot" and yield
+ * undefined (see the module header).
+ */
+function toMemRuns(raw: unknown, reject: (message: string) => never): MemRun[] | undefined {
+  if (raw === undefined || raw === null) {
+    return undefined;
+  }
+  if (!Array.isArray(raw)) {
+    reject("'mem' must be an array or null");
+  }
+  return raw.map((entry, i) => {
+    if (!isPlainObject(entry)) {
+      reject(`mem[${i}] must be an object`);
+    }
+    const { addr, bytes } = entry;
+    if (typeof addr !== 'number') {
+      reject(`mem[${i}].addr must be a number`);
+    }
+    if (!isEvenLengthHex(bytes)) {
+      reject(`mem[${i}].bytes must be an even-length lowercase-hex string`);
+    }
+    return { addr, bytes: new Uint8Array(Buffer.from(bytes, 'hex')) };
+  });
 }
 
 /**
