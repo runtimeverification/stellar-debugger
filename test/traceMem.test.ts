@@ -17,7 +17,7 @@ describe('trace parsing — mem sparse snapshot (hex) + globals (PA4)', () => {
     // mem is a FULL sparse snapshot: a list of { addr, bytes:<lowercase-hex> }
     // runs. Two runs at different addresses; bytes decode to a Uint8Array.
     const rec = toTraceRecord(
-      {
+      { kind: 'instr',
         pos: 10,
         instr: ['i32.store'],
         stack: [],
@@ -43,7 +43,7 @@ describe('trace parsing — mem sparse snapshot (hex) + globals (PA4)', () => {
 
   it('decodes a known lowercase-hex string to the exact bytes', () => {
     const rec = toTraceRecord(
-      { pos: 1, instr: ['nop'], stack: [], locals: {}, mem: [{ addr: 0, bytes: '00ff0a10' }] },
+      { kind: 'instr', pos: 1, instr: ['nop'], stack: [], locals: {}, mem: [{ addr: 0, bytes: '00ff0a10' }] },
       1,
     );
     assert.ok(rec.mem);
@@ -53,11 +53,11 @@ describe('trace parsing — mem sparse snapshot (hex) + globals (PA4)', () => {
   it('accepts an empty mem array and empty run bytes', () => {
     // An empty snapshot list is valid (nothing written yet is normally null,
     // but an explicit [] must parse), as is a zero-length run.
-    const emptyList = toTraceRecord({ pos: 1, instr: ['nop'], stack: [], locals: {}, mem: [] }, 1);
+    const emptyList = toTraceRecord({ kind: 'instr', pos: 1, instr: ['nop'], stack: [], locals: {}, mem: [] }, 1);
     assert.deepStrictEqual(emptyList.mem, []);
 
     const emptyRun = toTraceRecord(
-      { pos: 1, instr: ['nop'], stack: [], locals: {}, mem: [{ addr: 0, bytes: '' }] },
+      { kind: 'instr', pos: 1, instr: ['nop'], stack: [], locals: {}, mem: [{ addr: 0, bytes: '' }] },
       1,
     );
     assert.ok(emptyRun.mem);
@@ -66,12 +66,12 @@ describe('trace parsing — mem sparse snapshot (hex) + globals (PA4)', () => {
   });
 
   it('treats "mem": null as no snapshot (undefined)', () => {
-    const rec = toTraceRecord({ pos: 1, instr: ['nop'], stack: [], locals: {}, mem: null }, 1);
+    const rec = toTraceRecord({ kind: 'instr', pos: 1, instr: ['nop'], stack: [], locals: {}, mem: null }, 1);
     assert.strictEqual(rec.mem, undefined);
   });
 
   it('treats an absent mem key as no snapshot (undefined)', () => {
-    const rec = toTraceRecord({ pos: 1, instr: ['nop'], stack: [], locals: {} }, 1);
+    const rec = toTraceRecord({ kind: 'instr', pos: 1, instr: ['nop'], stack: [], locals: {} }, 1);
     assert.strictEqual(rec.mem, undefined);
   });
 
@@ -88,46 +88,46 @@ describe('trace parsing — mem sparse snapshot (hex) + globals (PA4)', () => {
 
   it('rejects a mem that is neither an array nor null', () => {
     assert.throws(
-      () => toTraceRecord({ pos: 1, instr: ['nop'], mem: { addr: 0, bytes: '01' } }, 1),
+      () => toTraceRecord({ kind: 'instr', pos: 1, instr: ['nop'], mem: { addr: 0, bytes: '01' } }, 1),
       TraceParseError,
     );
     assert.throws(
-      () => toTraceRecord({ pos: 1, instr: ['nop'], mem: 'ff' }, 1),
+      () => toTraceRecord({ kind: 'instr', pos: 1, instr: ['nop'], mem: 'ff' }, 1),
       TraceParseError,
     );
   });
 
   it('rejects a mem run missing addr', () => {
     assert.throws(
-      () => toTraceRecord({ pos: 1, instr: ['nop'], mem: [{ bytes: '01' }] }, 1),
+      () => toTraceRecord({ kind: 'instr', pos: 1, instr: ['nop'], mem: [{ bytes: '01' }] }, 1),
       TraceParseError,
     );
   });
 
   it('rejects a mem run with a non-numeric addr', () => {
     assert.throws(
-      () => toTraceRecord({ pos: 1, instr: ['nop'], mem: [{ addr: '0', bytes: '01' }] }, 1),
+      () => toTraceRecord({ kind: 'instr', pos: 1, instr: ['nop'], mem: [{ addr: '0', bytes: '01' }] }, 1),
       TraceParseError,
     );
   });
 
   it('rejects a mem run whose bytes are not a string', () => {
     assert.throws(
-      () => toTraceRecord({ pos: 1, instr: ['nop'], mem: [{ addr: 0, bytes: 123 }] }, 1),
+      () => toTraceRecord({ kind: 'instr', pos: 1, instr: ['nop'], mem: [{ addr: 0, bytes: 123 }] }, 1),
       TraceParseError,
     );
   });
 
   it('rejects a mem run whose bytes contain non-hex characters', () => {
     assert.throws(
-      () => toTraceRecord({ pos: 1, instr: ['nop'], mem: [{ addr: 0, bytes: 'zz' }] }, 1),
+      () => toTraceRecord({ kind: 'instr', pos: 1, instr: ['nop'], mem: [{ addr: 0, bytes: 'zz' }] }, 1),
       TraceParseError,
     );
   });
 
   it('rejects a mem run whose bytes have odd length', () => {
     assert.throws(
-      () => toTraceRecord({ pos: 1, instr: ['nop'], mem: [{ addr: 0, bytes: 'abc' }] }, 1),
+      () => toTraceRecord({ kind: 'instr', pos: 1, instr: ['nop'], mem: [{ addr: 0, bytes: 'abc' }] }, 1),
       TraceParseError,
     );
   });
@@ -135,7 +135,7 @@ describe('trace parsing — mem sparse snapshot (hex) + globals (PA4)', () => {
   it('parses globals when present and leaves them undefined when absent (optional)', () => {
     // globals is unchanged from M7: Record<string, [wasmType, value]>.
     const withGlobals = toTraceRecord(
-      {
+      { kind: 'instr',
         pos: 1,
         instr: ['nop'],
         stack: [],
@@ -149,17 +149,17 @@ describe('trace parsing — mem sparse snapshot (hex) + globals (PA4)', () => {
       '1': ['i64', '4294967296'],
     });
 
-    const noGlobals = toTraceRecord({ pos: 1, instr: ['nop'], stack: [], locals: {} }, 1);
+    const noGlobals = toTraceRecord({ kind: 'instr', pos: 1, instr: ['nop'], stack: [], locals: {} }, 1);
     assert.strictEqual(noGlobals.globals, undefined);
   });
 
   it('rejects globals that are not an object of [type, value] pairs', () => {
     assert.throws(
-      () => toTraceRecord({ pos: 1, instr: ['nop'], globals: [['i32', 1]] }, 1),
+      () => toTraceRecord({ kind: 'instr', pos: 1, instr: ['nop'], globals: [['i32', 1]] }, 1),
       TraceParseError,
     );
     assert.throws(
-      () => toTraceRecord({ pos: 1, instr: ['nop'], globals: { '0': ['i32'] } }, 1),
+      () => toTraceRecord({ kind: 'instr', pos: 1, instr: ['nop'], globals: { '0': ['i32'] } }, 1),
       TraceParseError,
     );
   });

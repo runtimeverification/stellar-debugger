@@ -4,8 +4,8 @@ import { parseTraceJsonl, toTraceRecord, toTraceRecords, TraceParseError, opcode
 describe('trace parsing', () => {
   it('parses a well-formed JSONL trace', () => {
     const jsonl =
-      '{"pos": 100, "instr": ["local.get", 0], "stack": [], "locals": {"0": ["i64", 4]}}\n' +
-      '{"pos": null, "instr": ["host.return"], "stack": [["u32", 7]], "locals": {}}\n';
+      '{"kind":"instr","pos":100,"instr":["local.get",0],"stack":[],"locals":{"0":["i64",4]}}\n' +
+      '{"kind":"instr","pos":null,"instr":["host.return"],"stack":[["u32",7]],"locals":{}}\n';
     const records = parseTraceJsonl(jsonl);
     assert.strictEqual(records.length, 2);
     assert.strictEqual(records[0].pos, 100);
@@ -15,12 +15,12 @@ describe('trace parsing', () => {
   });
 
   it('skips blank lines', () => {
-    const jsonl = '\n{"pos": 1, "instr": ["nop"], "stack": [], "locals": {}}\n\n';
+    const jsonl = '\n{"kind":"instr","pos":1,"instr":["nop"],"stack":[],"locals":{}}\n\n';
     assert.strictEqual(parseTraceJsonl(jsonl).length, 1);
   });
 
   it('defaults missing stack/locals to empty', () => {
-    const rec = toTraceRecord({ pos: 1, instr: ['nop'] }, 1);
+    const rec = toTraceRecord({ kind: 'instr', pos: 1, instr: ['nop'] }, 1);
     assert.deepStrictEqual(rec.stack, []);
     assert.deepStrictEqual(rec.locals, {});
   });
@@ -30,16 +30,16 @@ describe('trace parsing', () => {
   });
 
   it('rejects a bad pos', () => {
-    assert.throws(() => toTraceRecord({ pos: 'x', instr: ['nop'] }, 1), TraceParseError);
+    assert.throws(() => toTraceRecord({ kind: 'instr', pos: 'x', instr: ['nop'] }, 1), TraceParseError);
   });
 
   it('rejects malformed stack pairs', () => {
-    assert.throws(() => toTraceRecord({ pos: 1, instr: ['nop'], stack: [['i64']] }, 1), TraceParseError);
+    assert.throws(() => toTraceRecord({ kind: 'instr', pos: 1, instr: ['nop'], stack: [['i64']] }, 1), TraceParseError);
   });
 
   it('reports the line number on invalid JSON', () => {
     assert.throws(
-      () => parseTraceJsonl('{"pos":1,"instr":["nop"]}\nnot json\n'),
+      () => parseTraceJsonl('{"kind":"instr","pos":1,"instr":["nop"]}\nnot json\n'),
       /trace line 2/,
     );
   });
@@ -48,9 +48,9 @@ describe('trace parsing', () => {
   // objects (not a JSONL string); toTraceRecords validates that array shape.
   it('validates an array of already-parsed record objects', () => {
     const records = toTraceRecords([
-      { pos: 3, instr: ['const', 'i32', 1048576], stack: [], locals: {} },
+      { kind: 'instr', pos: 3, instr: ['const', 'i32', 1048576], stack: [], locals: {} },
       // An interleaved Soroban VM event (pos null, no stack/locals) is accepted.
-      { pos: null, instr: ['callContract'], from: {}, to: {}, function: 'add', args: [] },
+      { kind: 'callContract', from: {}, to: {}, function: 'add', args: [] },
     ]);
     assert.strictEqual(records.length, 2);
     assert.strictEqual(records[0].pos, 3);
@@ -63,7 +63,7 @@ describe('trace parsing', () => {
 
   it('toTraceRecords reports the offending element index on a malformed record', () => {
     assert.throws(
-      () => toTraceRecords([{ pos: 1, instr: ['nop'] }, { pos: 'x', instr: ['nop'] }]),
+      () => toTraceRecords([{ kind: 'instr', pos: 1, instr: ['nop'] }, { kind: 'instr', pos: 'x', instr: ['nop'] }]),
       /trace line 2/,
     );
   });

@@ -28,6 +28,13 @@ const WASM = path.join(FIXTURES, 'sample_contract.wasm');
 const INCREMENT_WASM = path.join(FIXTURES, 'increment-debug.wasm');
 const KOMET_NODE_COMMAND = process.env.KOMET_NODE_COMMAND ?? 'komet-node';
 const optedOut = process.env.KOMET_NODE_E2E === '0';
+/**
+ * How long the presence probe below waits. The packaged binary answers `--help`
+ * at once, but one run from source loads pyk and the K bindings first and takes
+ * ~20s, which a tighter bound reports as "not found". Same knob as
+ * sequenceRunner.e2e.test.ts.
+ */
+const PROBE_TIMEOUT_MS = Number(process.env.KOMET_NODE_PROBE_TIMEOUT_MS ?? 30_000);
 
 function nodeConfig() {
   return {
@@ -47,7 +54,10 @@ describe('TurnkeyPipeline (real komet-node)', function () {
     }
     // Fail loudly when the node is missing — a silent skip is exactly how a
     // breaking format change slips through unnoticed.
-    const probe = spawnSync(KOMET_NODE_COMMAND, ['--help'], { stdio: 'ignore', timeout: 10_000 });
+    const probe = spawnSync(KOMET_NODE_COMMAND, ['--help'], {
+      stdio: 'ignore',
+      timeout: PROBE_TIMEOUT_MS,
+    });
     if (probe.error) {
       throw new Error(
         `komet-node not found on PATH (command: '${KOMET_NODE_COMMAND}'). The real-node ` +

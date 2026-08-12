@@ -10,11 +10,10 @@
  * `TraceEvent`; `komet/trace.ts` hangs the result off `TraceRecord.event` so the
  * existing record fields (and every consumer of them) are untouched.
  *
- * The event is identified here by `instr[0]`, and its inline operands by
- * `instr[1..]`. That is the older wire spelling; komet >= v0.1.87 tags records
- * with `kind` and names those operands instead. `trace.ts` normalizes the newer
- * form back onto `instr` before calling in (see its "Two wire formats"), so this
- * module reads one shape and neither format appears below.
+ * A record is identified by its `kind`, and each event's operands are named
+ * fields of the record — `operation`/`durability` on a storage write, say. An
+ * instruction record has no event; `kind: "instr"` falls through to `undefined`
+ * like any tag this module does not model.
  *
  * Unlike the core record fields, an event payload is **auxiliary**: stepping,
  * breakpoints and source mapping do not depend on it, only the state views do.
@@ -345,11 +344,11 @@ function objectList(obj: Obj, key: string, lineNo: number, tag: string): Obj[] {
  */
 export function parseTraceEvent(
   obj: Record<string, unknown>,
-  instr: readonly unknown[],
+  kind: string,
   lineNo: number,
 ): TraceEvent | undefined {
   try {
-    return strictParseTraceEvent(obj, instr, lineNo);
+    return strictParseTraceEvent(obj, kind, lineNo);
   } catch (e) {
     if (e instanceof TraceParseError) {
       return undefined;
@@ -363,121 +362,115 @@ export function parseTraceEvent(
  * `TraceParseError`. This is the pinned payload contract (the tests call it
  * directly); production parsing goes through the tolerant `parseTraceEvent`.
  *
- * `instr` is the record's already-validated instruction array; `obj` is the raw
- * record object, which carries the event's extra keys.
+ * `kind` is the record's already-validated kind; `obj` is the raw record object,
+ * which carries the event's own fields.
  */
 export function strictParseTraceEvent(
   obj: Record<string, unknown>,
-  instr: readonly unknown[],
+  kind: string,
   lineNo: number,
 ): TraceEvent | undefined {
-  const tag = instr[0];
-  if (typeof tag !== 'string') {
-    return undefined;
-  }
-
-  switch (tag) {
+  switch (kind) {
     case 'ledger':
       return {
         kind: 'ledger',
-        sequence: reqInt(obj, 'sequence', lineNo, tag),
-        timestamp: reqInt(obj, 'timestamp', lineNo, tag),
-        accounts: objectList(obj, 'accounts', lineNo, tag).map((entry) => ({
-          account: reqAddress(entry, 'account', lineNo, tag),
-          balance: reqInt(entry, 'balance', lineNo, tag),
+        sequence: reqInt(obj, 'sequence', lineNo, kind),
+        timestamp: reqInt(obj, 'timestamp', lineNo, kind),
+        accounts: objectList(obj, 'accounts', lineNo, kind).map((entry) => ({
+          account: reqAddress(entry, 'account', lineNo, kind),
+          balance: reqInt(entry, 'balance', lineNo, kind),
         })),
-        contracts: objectList(obj, 'contracts', lineNo, tag).map((entry) => ({
-          contract: reqAddress(entry, 'contract', lineNo, tag),
-          wasmHash: reqHex(entry, 'wasmHash', lineNo, tag),
-          liveUntil: reqInt(entry, 'liveUntil', lineNo, tag),
-          storage: storageList(entry, 'storage', lineNo, tag),
+        contracts: objectList(obj, 'contracts', lineNo, kind).map((entry) => ({
+          contract: reqAddress(entry, 'contract', lineNo, kind),
+          wasmHash: reqHex(entry, 'wasmHash', lineNo, kind),
+          liveUntil: reqInt(entry, 'liveUntil', lineNo, kind),
+          storage: storageList(entry, 'storage', lineNo, kind),
         })),
-        codes: objectList(obj, 'codes', lineNo, tag).map((entry) => ({
-          hash: reqHex(entry, 'hash', lineNo, tag),
-          liveUntil: reqInt(entry, 'liveUntil', lineNo, tag),
+        codes: objectList(obj, 'codes', lineNo, kind).map((entry) => ({
+          hash: reqHex(entry, 'hash', lineNo, kind),
+          liveUntil: reqInt(entry, 'liveUntil', lineNo, kind),
         })),
       };
 
     case 'callContract':
       return {
         kind: 'callContract',
-        from: reqAddress(obj, 'from', lineNo, tag),
-        to: reqAddress(obj, 'to', lineNo, tag),
-        function: reqString(obj, 'function', lineNo, tag),
-        args: scValList(obj, 'args', lineNo, tag),
-        depth: reqInt(obj, 'depth', lineNo, tag),
-        storage: storageList(obj, 'storage', lineNo, tag),
+        from: reqAddress(obj, 'from', lineNo, kind),
+        to: reqAddress(obj, 'to', lineNo, kind),
+        function: reqString(obj, 'function', lineNo, kind),
+        args: scValList(obj, 'args', lineNo, kind),
+        depth: reqInt(obj, 'depth', lineNo, kind),
+        storage: storageList(obj, 'storage', lineNo, kind),
       };
 
-    // komet spells the trap path `endWasm-error` and the success path `endWasm`;
-    // both are call exits and differ only in the `success` flag they carry.
+    // One record closes a call whether it returned or trapped; `success` is what
+    // tells the two apart.
     case 'endWasm':
-    case 'endWasm-error':
       return {
         kind: 'endWasm',
-        success: reqBool(obj, 'success', lineNo, tag),
-        depth: reqInt(obj, 'depth', lineNo, tag),
+        success: reqBool(obj, 'success', lineNo, kind),
+        depth: reqInt(obj, 'depth', lineNo, kind),
         result: obj.result === null || obj.result === undefined
           ? null
-          : reqScVal(obj, 'result', lineNo, tag),
+          : reqScVal(obj, 'result', lineNo, kind),
       };
 
     case 'contractData': {
-      const op = instr[1];
+      const op = obj.operation;
       if (op !== 'put' && op !== 'del' && op !== 'get' && op !== 'has') {
         // An op this adapter does not model: treat the record as a plain one
         // rather than throwing, so a producer may add ops freely.
         return undefined;
       }
-      const args = scValList(obj, 'args', lineNo, tag);
+      const args = scValList(obj, 'args', lineNo, kind);
       if (args.length === 0) {
-        fail(lineNo, `${tag} event: '${op}' needs a key argument`);
+        fail(lineNo, `${kind} event: '${op}' needs a key argument`);
       }
       if (op === 'put' && args.length < 2) {
-        fail(lineNo, `${tag} event: 'put' needs both a key and a value argument`);
+        fail(lineNo, `${kind} event: 'put' needs both a key and a value argument`);
       }
       const event: Extract<TraceEvent, { kind: 'contractData' }> = {
         kind: 'contractData',
         op,
-        durability: reqDurability(instr[2], lineNo, tag),
-        contract: reqAddress(obj, 'contract', lineNo, tag),
+        durability: reqDurability(obj.durability, lineNo, kind),
+        contract: reqAddress(obj, 'contract', lineNo, kind),
         key: args[0],
       };
       if (op === 'put') {
         event.value = args[1];
       }
       if (obj.result !== undefined) {
-        event.result = obj.result === null ? null : reqScVal(obj, 'result', lineNo, tag);
+        event.result = obj.result === null ? null : reqScVal(obj, 'result', lineNo, kind);
       }
       return event;
     }
 
     case 'contractTtl': {
-      const target = instr[1];
+      const target = obj.target;
       if (target === 'data') {
         return {
           kind: 'contractTtl',
           target,
-          contract: reqAddress(obj, 'contract', lineNo, tag),
-          durability: reqDurability(obj.durability, lineNo, tag),
-          key: reqScVal(obj, 'key', lineNo, tag),
-          liveUntil: reqInt(obj, 'liveUntil', lineNo, tag),
+          contract: reqAddress(obj, 'contract', lineNo, kind),
+          durability: reqDurability(obj.durability, lineNo, kind),
+          key: reqScVal(obj, 'key', lineNo, kind),
+          liveUntil: reqInt(obj, 'liveUntil', lineNo, kind),
         };
       }
       if (target === 'instance') {
         return {
           kind: 'contractTtl',
           target,
-          contract: reqAddress(obj, 'contract', lineNo, tag),
-          liveUntil: reqInt(obj, 'liveUntil', lineNo, tag),
+          contract: reqAddress(obj, 'contract', lineNo, kind),
+          liveUntil: reqInt(obj, 'liveUntil', lineNo, kind),
         };
       }
       if (target === 'code') {
         return {
           kind: 'contractTtl',
           target,
-          hash: reqHex(obj, 'hash', lineNo, tag),
-          liveUntil: reqInt(obj, 'liveUntil', lineNo, tag),
+          hash: reqHex(obj, 'hash', lineNo, kind),
+          liveUntil: reqInt(obj, 'liveUntil', lineNo, kind),
         };
       }
       return undefined;
@@ -486,44 +479,44 @@ export function strictParseTraceEvent(
     case 'contractCode':
       return {
         kind: 'contractCode',
-        contract: reqAddress(obj, 'contract', lineNo, tag),
-        wasmHash: reqHex(obj, 'wasmHash', lineNo, tag),
+        contract: reqAddress(obj, 'contract', lineNo, kind),
+        wasmHash: reqHex(obj, 'wasmHash', lineNo, kind),
       };
 
     case 'deployContract':
       return {
         kind: 'deployContract',
-        contract: reqAddress(obj, 'contract', lineNo, tag),
-        wasmHash: reqHex(obj, 'wasmHash', lineNo, tag),
-        liveUntil: reqInt(obj, 'liveUntil', lineNo, tag),
+        contract: reqAddress(obj, 'contract', lineNo, kind),
+        wasmHash: reqHex(obj, 'wasmHash', lineNo, kind),
+        liveUntil: reqInt(obj, 'liveUntil', lineNo, kind),
       };
 
     case 'account':
       return {
         kind: 'account',
-        account: reqAddress(obj, 'account', lineNo, tag),
-        balance: reqInt(obj, 'balance', lineNo, tag),
+        account: reqAddress(obj, 'account', lineNo, kind),
+        balance: reqInt(obj, 'balance', lineNo, kind),
       };
 
     case 'ledgerInfo':
       return {
         kind: 'ledgerInfo',
-        sequence: reqInt(obj, 'sequence', lineNo, tag),
-        timestamp: reqInt(obj, 'timestamp', lineNo, tag),
+        sequence: reqInt(obj, 'sequence', lineNo, kind),
+        timestamp: reqInt(obj, 'timestamp', lineNo, kind),
       };
 
     case 'addObject':
       return {
         kind: 'addObject',
-        index: reqInt(obj, 'index', lineNo, tag),
-        value: reqScVal(obj, 'value', lineNo, tag),
+        index: reqInt(obj, 'index', lineNo, kind),
+        value: reqScVal(obj, 'value', lineNo, kind),
       };
 
     case 'hostCall': {
-      const module = instr[1];
-      const fn = instr[2];
+      const module = obj.module;
+      const fn = obj.function;
       if (typeof module !== 'string' || typeof fn !== 'string') {
-        fail(lineNo, `${tag} event: instr must be ["hostCall", module, function]`);
+        fail(lineNo, `${kind} event: 'module' and 'function' must both be strings`);
       }
       return { kind: 'hostCall', module, function: fn };
     }

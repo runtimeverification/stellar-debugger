@@ -39,15 +39,14 @@ const B = 'b'.repeat(64);
 
 /** A single-`nop` instruction record at code offset `pos`. */
 function nopAt(pos: number | null): TraceRecord {
-  return toTraceRecord({ pos, instr: ['nop'], stack: [], locals: {} }, 1);
+  return toTraceRecord({ kind: 'instr', pos, instr: ['nop'], stack: [], locals: {} }, 1);
 }
 
 /** A `callContract` boundary opening a call into `to`. */
 function callInto(to: string, depth = 1): TraceRecord {
   return toTraceRecord(
     {
-      pos: null,
-      instr: ['callContract'],
+      kind: 'callContract',
       from: { type: 'address', addrType: 'account', value: 'f'.repeat(64) },
       to: { type: 'address', addrType: 'contract', value: to },
       function: 'f',
@@ -62,7 +61,7 @@ function callInto(to: string, depth = 1): TraceRecord {
 /** An `endWasm` boundary closing the innermost open call. */
 function endCall(success = true, depth = 1): TraceRecord {
   return toTraceRecord(
-    { pos: null, instr: ['endWasm'], success, depth, result: { type: 'void' } },
+    { kind: 'endWasm', success, depth, result: { type: 'void' } },
     1,
   );
 }
@@ -160,7 +159,7 @@ describe('artifacts: validatedPositions cross-contract gate', () => {
     assert.deepStrictEqual(positions, [null, 10, 20, null, null, null, 30]);
   });
 
-  it('backward-compat: with no call boundaries the gate is inert', () => {
+  it('is inert on a trace with no call boundaries', () => {
     // The same positions in a trace carrying no events: nothing is filtered.
     const positions = positionsOf(nopAt(10), nopAt(20), nopAt(10), nopAt(30));
     assert.deepStrictEqual(positions, [10, 20, 10, 30]);

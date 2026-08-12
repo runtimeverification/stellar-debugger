@@ -17,28 +17,27 @@ const u32 = (n: number) => ({ type: 'u32', value: n });
 
 /** A no-op instruction record, the filler between events. */
 function nop(pos = 1): Record<string, unknown> {
-  return { pos, instr: ['nop'], stack: [], locals: {} };
+  return { kind: 'instr', pos, instr: ['nop'], stack: [], locals: {} };
 }
 
 function call(to: Record<string, unknown> = C, depth = 1, storage: unknown[] = []) {
-  return { pos: null, instr: ['callContract'], from: A, to, function: 'f', args: [], depth, storage };
+  return { kind: 'callContract', from: A, to, function: 'f', args: [], depth, storage };
 }
 
 function end(success = true, depth = 1) {
-  return { pos: null, instr: ['endWasm'], success, depth, result: null };
+  return { kind: 'endWasm', success, depth, result: null };
 }
 
 function put(key: string, value: number, durability = 'instance', contract = C) {
   return {
-    pos: null,
-    instr: ['contractData', 'put', durability],
+    kind: 'contractData', operation: 'put', durability,
     contract,
     args: [sym(key), u32(value)],
   };
 }
 
 function del(key: string, durability = 'instance', contract = C) {
-  return { pos: null, instr: ['contractData', 'del', durability], contract, args: [sym(key)] };
+  return { kind: 'contractData', operation: 'del', durability, contract, args: [sym(key)] };
 }
 
 function build(objs: Record<string, unknown>[]): TraceRecord[] {
@@ -91,8 +90,7 @@ describe('LedgerImage (docs/state-inspection.md, L1–L15)', () => {
   it('L1: a ledger baseline seeds storage, accounts, contracts, codes and info', () => {
     const records = build([
       {
-        pos: null,
-        instr: ['ledger'],
+        kind: 'ledger',
         sequence: 7,
         timestamp: 1700,
         accounts: [{ account: A, balance: 500 }],
@@ -229,8 +227,7 @@ describe('LedgerImage (docs/state-inspection.md, L1–L15)', () => {
   it('L5: rollback restores balances and TTLs too, not only storage', () => {
     const records = build([
       {
-        pos: null,
-        instr: ['ledger'],
+        kind: 'ledger',
         sequence: 1,
         timestamp: 2,
         accounts: [{ account: A, balance: 100 }],
@@ -238,8 +235,8 @@ describe('LedgerImage (docs/state-inspection.md, L1–L15)', () => {
         codes: [],
       },
       call(C, 1),
-      { pos: null, instr: ['account', 'set'], account: A, balance: 999 },
-      { pos: null, instr: ['contractTtl', 'instance'], contract: C, liveUntil: 777 },
+      { kind: 'account', account: A, balance: 999 },
+      { kind: 'contractTtl', target: 'instance', contract: C, liveUntil: 777 },
       end(false, 1),
       nop(),
     ]);
@@ -304,8 +301,7 @@ describe('LedgerImage (docs/state-inspection.md, L1–L15)', () => {
     const records = build([
       call(C, 1, [{ durability: 'persistent', key: sym('k'), value: u32(9), liveUntil: 50 }]),
       {
-        pos: null,
-        instr: ['contractTtl', 'data'],
+        kind: 'contractTtl', target: 'data',
         contract: C,
         durability: 'persistent',
         key: sym('k'),
@@ -325,8 +321,7 @@ describe('LedgerImage (docs/state-inspection.md, L1–L15)', () => {
       build([
         call(),
         {
-          pos: null,
-          instr: ['contractTtl', 'data'],
+          kind: 'contractTtl', target: 'data',
           contract: C,
           durability: 'persistent',
           key: sym('ghost'),
@@ -341,15 +336,14 @@ describe('LedgerImage (docs/state-inspection.md, L1–L15)', () => {
   it('L7: code TTL applies to the uploaded code entry', () => {
     const records = build([
       {
-        pos: null,
-        instr: ['ledger'],
+        kind: 'ledger',
         sequence: 1,
         timestamp: 1,
         accounts: [],
         contracts: [],
         codes: [{ hash: 'ab12', liveUntil: 10 }],
       },
-      { pos: null, instr: ['contractTtl', 'code'], hash: 'ab12', liveUntil: 99 },
+      { kind: 'contractTtl', target: 'code', hash: 'ab12', liveUntil: 99 },
       nop(),
     ]);
     const image = new LedgerImage(records);
@@ -360,9 +354,9 @@ describe('LedgerImage (docs/state-inspection.md, L1–L15)', () => {
 
   it('L8: deployContract creates an entry and contractCode replaces its hash', () => {
     const records = build([
-      { pos: null, instr: ['deployContract'], contract: C, wasmHash: 'ab12', liveUntil: 42 },
+      { kind: 'deployContract', contract: C, wasmHash: 'ab12', liveUntil: 42 },
       nop(),
-      { pos: null, instr: ['contractCode'], contract: C, wasmHash: 'cd34' },
+      { kind: 'contractCode', contract: C, wasmHash: 'cd34' },
       nop(),
     ]);
     const image = new LedgerImage(records);
@@ -380,9 +374,9 @@ describe('LedgerImage (docs/state-inspection.md, L1–L15)', () => {
   it('L9: an account event sets a balance, creating the account if absent', () => {
     const image = new LedgerImage(
       build([
-        { pos: null, instr: ['account', 'set'], account: A, balance: 17 },
+        { kind: 'account', account: A, balance: 17 },
         nop(),
-        { pos: null, instr: ['account', 'set'], account: A, balance: 18 },
+        { kind: 'account', account: A, balance: 18 },
         nop(),
       ]),
     );
@@ -392,7 +386,7 @@ describe('LedgerImage (docs/state-inspection.md, L1–L15)', () => {
 
   it('L10: a ledgerInfo event sets sequence and timestamp', () => {
     const image = new LedgerImage(
-      build([{ pos: null, instr: ['ledgerInfo'], sequence: 9, timestamp: 10 }, nop()]),
+      build([{ kind: 'ledgerInfo', sequence: 9, timestamp: 10 }, nop()]),
     );
     assert.strictEqual(image.ledgerInfoAt(0), undefined);
     assert.deepStrictEqual(image.ledgerInfoAt(1), { sequence: 9, timestamp: 10 });
@@ -402,9 +396,9 @@ describe('LedgerImage (docs/state-inspection.md, L1–L15)', () => {
 
   it('L11: the host object table grows by addObject and is index-ordered', () => {
     const records = build([
-      { pos: null, instr: ['addObject'], value: u32(7), index: 0 },
+      { kind: 'addObject', value: u32(7), index: 0 },
       nop(),
-      { pos: null, instr: ['addObject'], value: sym('s'), index: 1 },
+      { kind: 'addObject', value: sym('s'), index: 1 },
       nop(),
     ]);
     const image = new LedgerImage(records);
@@ -420,7 +414,7 @@ describe('LedgerImage (docs/state-inspection.md, L1–L15)', () => {
     const image = new LedgerImage(
       build([
         call(C, 1),
-        { pos: null, instr: ['addObject'], value: u32(7), index: 0 },
+        { kind: 'addObject', value: u32(7), index: 0 },
         nop(),
         end(false, 1),
         nop(),

@@ -43,8 +43,8 @@ import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { Keypair } from '@stellar/stellar-sdk';
 import { TurnkeyPipeline } from '../src/pipeline/TurnkeyPipeline';
-import { KometRpcError } from '../src/komet/KometClient';
 import { SorobanLaunchArgs } from '../src/debugAdapter/types';
+import { TraceEvent } from '../src/komet/trace';
 
 const FIXTURES = path.join(__dirname, '..', '..', 'test', 'fixtures');
 const CTOR_WASM = path.join(FIXTURES, 'ctor_probe.wasm');
@@ -219,56 +219,62 @@ describe('M4 SequenceRunner e2e', function () {
   });
 
   // ------------------------------------------------------------------------
-  // Scenario 2: a spec-encoded Vec call argument is REJECTED by the real node.
+  // Scenario 2: a spec-encoded Vec call argument EXECUTES on the real node.
   //
-  // The composite fixture's only entry point is supply(Vec<(AssetKey,i128)>).
-  // The txBuilder correctly spec-encodes that argument as an SCV_VEC (SCVal type
-  // 16), but the real komet-node's scval_to_json only encodes SCALAR call
-  // arguments — vec/map raise `NotImplementedError: Unsupported SCVal type for
-  // JSON encoding: 16` server-side (see komet_node/scval.py, whose docstring
-  // notes vec/map "never appear as call arguments"). sendTransaction therefore
-  // fails on the node before the invocation ever executes, no trace is produced,
-  // and the pipeline surfaces the missing trace as a KometRpcError. This test
-  // pins that real node limitation: the code under test (pipeline / runner /
-  // txBuilder) is correct — the capability simply does not exist in komet-node
-  // yet. If komet-node ever gains vec/map call-arg support, this scenario must
-  // be reinstated as a positive trace assertion.
+  // The composite fixture's only entry point is supply(Vec<(AssetKey,i128)>), so
+  // this is the end-to-end proof that a composite call argument survives the
+  // whole path: the txBuilder spec-encodes it as an SCV_VEC, komet-node decodes
+  // it (scval_to_json recurses over vec/map, and #decodeArg has matching rules),
+  // and the invocation runs. It used to reject — vec/map raised
+  // NotImplementedError server-side before komet-node gained composite argument
+  // support — so this scenario also pins that the capability has not regressed.
   // ------------------------------------------------------------------------
-  it('rejects a supply invocation whose Vec<(AssetKey,i128)> argument the real komet-node cannot encode', async () => {
-    await assert.rejects(
-      () =>
-        runSequence({
-          type: 'soroban',
-          request: 'launch',
-          sourceSecret: SOURCE_SECRET,
-          node: nodeSettings(),
-          transactions: [
-            { kind: 'deploy', id: 'pool', wasm: COMPOSITE_WASM },
-            {
-              kind: 'invoke',
-              contract: 'pool',
-              function: 'supply',
-              // Vec<(AssetKey, i128)>: a unit variant and an integer-carrying
-              // variant, i128 values as strings — encoded via the contract spec.
-              args: {
-                requests: [
-                  [{ tag: 'Native' }, '1000'],
-                  [{ tag: 'Other', values: [7] }, '-5'],
-                ],
-              },
-            },
-          ],
-          trace: 'last',
-        }),
-      (err: unknown) => {
-        // The vec/map call argument never reaches execution: the node rejects
-        // sendTransaction, so the traced tx yields no trace and the pipeline
-        // raises a KometRpcError. Assert the type (not the exact wording) so a
-        // future message tweak does not make this brittle.
-        assert.ok(err instanceof KometRpcError, `expected a KometRpcError, got ${err}`);
-        return true;
-      },
-      'the real komet-node cannot encode a Vec<(AssetKey,i128)> call argument, so the run must reject',
+  it('traces a supply invocation whose argument is a Vec<(AssetKey,i128)>', async () => {
+    const resolved = await runSequence({
+      type: 'soroban',
+      request: 'launch',
+      sourceSecret: SOURCE_SECRET,
+      node: nodeSettings(),
+      transactions: [
+        { kind: 'deploy', id: 'pool', wasm: COMPOSITE_WASM },
+        {
+          kind: 'invoke',
+          contract: 'pool',
+          function: 'supply',
+          // Vec<(AssetKey, i128)>: a unit variant and an integer-carrying
+          // variant, i128 values as strings — encoded via the contract spec.
+          args: {
+            requests: [
+              [{ tag: 'Native' }, '1000'],
+              [{ tag: 'Other', values: [7] }, '-5'],
+            ],
+          },
+        },
+      ],
+      trace: 'last',
+    });
+
+    const records = resolved.model.records;
+    assert.ok(records.length > 0, 'expected a non-empty trace');
+
+    // The call frame echoes the decoded arguments, so a composite that were
+    // silently dropped or flattened would show up here.
+    const call = records.find((rec) => rec.event?.kind === 'callContract');
+    assert.ok(call, 'expected a callContract VM event at the invocation boundary');
+    const event = call.event as Extract<TraceEvent, { kind: 'callContract' }>;
+    assert.strictEqual(event.function, 'supply');
+    assert.strictEqual(event.args.length, 1, 'supply takes one argument');
+    assert.strictEqual(event.args[0].type, 'vec');
+    assert.strictEqual(
+      (event.args[0].value as unknown[]).length,
+      2,
+      'the vec carries both (AssetKey, i128) entries',
+    );
+
+    // And it is a replayable trace, not just an accepted transaction.
+    assert.ok(
+      records.some((_, i) => resolved.positions[i] !== null),
+      'expected at least one real (byte-positioned) instruction',
     );
   });
 

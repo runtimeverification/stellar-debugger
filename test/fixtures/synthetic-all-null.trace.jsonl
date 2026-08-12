@@ -1,2 +1,2 @@
-{"pos":null,"instr":["nop"],"stack":[],"locals":{}}
-{"pos":null,"instr":["nop"],"stack":[],"locals":{}}
+{"kind":"instr","pos":null,"instr":["nop"],"stack":[],"locals":{}}
+{"kind":"instr","pos":null,"instr":["nop"],"stack":[],"locals":{}}

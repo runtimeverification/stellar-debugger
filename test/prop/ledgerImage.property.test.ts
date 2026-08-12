@@ -31,11 +31,10 @@ type Step =
 function toRecord(step: Step, depth: number): Obj {
   switch (step.op) {
     case 'nop':
-      return { pos: 1, instr: ['nop'], stack: [], locals: {} };
+      return { kind: 'instr', pos: 1, instr: ['nop'], stack: [], locals: {} };
     case 'put':
       return {
-        pos: null,
-        instr: ['contractData', 'put', 'instance'],
+        kind: 'contractData', operation: 'put', durability: 'instance',
         contract: CONTRACT,
         args: [
           { type: 'symbol', value: step.key },
@@ -44,15 +43,13 @@ function toRecord(step: Step, depth: number): Obj {
       };
     case 'del':
       return {
-        pos: null,
-        instr: ['contractData', 'del', 'instance'],
+        kind: 'contractData', operation: 'del', durability: 'instance',
         contract: CONTRACT,
         args: [{ type: 'symbol', value: step.key }],
       };
     case 'call':
       return {
-        pos: null,
-        instr: ['callContract'],
+        kind: 'callContract',
         from: ACCOUNT,
         to: CONTRACT,
         function: 'f',
@@ -61,7 +58,7 @@ function toRecord(step: Step, depth: number): Obj {
         storage: [],
       };
     case 'end':
-      return { pos: null, instr: ['endWasm'], success: step.success, depth, result: null };
+      return { kind: 'endWasm', success: step.success, depth, result: null };
   }
 }
 

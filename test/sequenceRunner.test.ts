@@ -58,10 +58,10 @@ const SOURCE_PUBKEY = SOURCE.publicKey();
 // is the only property these tests read (which is deterministic regardless of
 // the traced wasm), so it stays small and fixture-independent.
 const TRACE = [
-  '{"pos":null,"instr":["callContract"],"function":"run","args":[],"depth":1}',
-  '{"pos":3,"instr":["const","i32",1],"stack":[],"locals":{}}',
-  '{"pos":5,"instr":["return"],"stack":[["u32",1]],"locals":{}}',
-  '{"pos":null,"instr":["endWasm"],"success":true,"result":{"type":"u32","value":1}}',
+  '{"kind":"callContract","function":"run","args":[],"depth":1}',
+  '{"kind":"instr","pos":3,"instr":["const","i32",1],"stack":[],"locals":{}}',
+  '{"kind":"instr","pos":5,"instr":["return"],"stack":[["u32",1]],"locals":{}}',
+  '{"kind":"endWasm","success":true,"result":{"type":"u32","value":1}}',
 ].join('\n');
 const TRACE_LEN = 4;
 

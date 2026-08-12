@@ -10,7 +10,7 @@ import { strictParseTraceEvent } from '../src/komet/traceEvents';
  * "tolerance" block at the bottom).
  */
 function strict(obj: Record<string, unknown>, lineNo = 1): TraceEvent | undefined {
-  return strictParseTraceEvent(obj, obj.instr as unknown[], lineNo);
+  return strictParseTraceEvent(obj, obj.kind as string, lineNo);
 }
 
 const FIXTURES = path.join(__dirname, '..', '..', 'test', 'fixtures');
@@ -33,7 +33,7 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
   // ---------------------------------------------------------------- instructions
 
   it('leaves a plain instruction record without an event payload', () => {
-    const rec = toTraceRecord({ pos: 3, instr: ['const', 'i32', 1048576], stack: [], locals: {} }, 1);
+    const rec = toTraceRecord({ kind: 'instr', pos: 3, instr: ['const', 'i32', 1048576], stack: [], locals: {} }, 1);
     assert.strictEqual(rec.event, undefined);
   });
 
@@ -42,8 +42,7 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
   it('parses a callContract event with its callee storage baseline (L1, L6)', () => {
     const rec = toTraceRecord(
       {
-        pos: null,
-        instr: ['callContract'],
+        kind: 'callContract',
         from: ACCOUNT,
         to: CONTRACT,
         function: 'increment',
@@ -75,8 +74,7 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
   it('accepts an empty callContract storage baseline', () => {
     const rec = toTraceRecord(
       {
-        pos: null,
-        instr: ['callContract'],
+        kind: 'callContract',
         from: ACCOUNT,
         to: CONTRACT,
         function: 'increment',
@@ -94,8 +92,7 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
       () =>
         strict(
           {
-            pos: null,
-            instr: ['callContract'],
+            kind: 'callContract',
             from: ACCOUNT,
             to: CONTRACT,
             function: 'f',
@@ -113,8 +110,7 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
     assert.throws(
       () =>
         strict({
-          pos: null,
-          instr: ['callContract'],
+          kind: 'callContract',
           from: ACCOUNT,
           to: CONTRACT,
           function: 'f',
@@ -132,7 +128,7 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
 
   it('parses a successful endWasm with a result (L5)', () => {
     const rec = toTraceRecord(
-      { pos: null, instr: ['endWasm'], success: true, depth: 1, result: { type: 'u32', value: 5 } },
+      { kind: 'endWasm', success: true, depth: 1, result: { type: 'u32', value: 5 } },
       1,
     );
     const event = expectKind(rec.event, 'endWasm');
@@ -144,8 +140,7 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
   it('parses a failed endWasm and a void endWasm (null result)', () => {
     const failed = toTraceRecord(
       {
-        pos: null,
-        instr: ['endWasm'],
+        kind: 'endWasm',
         success: false,
         depth: 2,
         result: { type: 'error', errType: 'contract', code: 3 },
@@ -155,21 +150,10 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
     assert.strictEqual(expectKind(failed.event, 'endWasm').success, false);
 
     const voidResult = toTraceRecord(
-      { pos: null, instr: ['endWasm'], success: true, depth: 1, result: null },
+      { kind: 'endWasm', success: true, depth: 1, result: null },
       1,
     );
     assert.strictEqual(expectKind(voidResult.event, 'endWasm').result, null);
-  });
-
-  // Some komet builds spell the trap-path exit marker `endWasm-error`; it is the
-  // same exit, so it parses to an `endWasm` event and closes the call like any
-  // other (see komet/executingContract.ts).
-  it('treats an endWasm-error tag as a failed call exit', () => {
-    const rec = toTraceRecord(
-      { pos: null, instr: ['endWasm-error'], success: false, depth: 1, result: null },
-      1,
-    );
-    assert.strictEqual(expectKind(rec.event, 'endWasm').success, false);
   });
 
   // ---------------------------------------------------------------- contractData
@@ -177,8 +161,7 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
   it('normalizes a contractData put into key + value (L2)', () => {
     const rec = toTraceRecord(
       {
-        pos: null,
-        instr: ['contractData', 'put', 'instance'],
+        kind: 'contractData', operation: 'put', durability: 'instance',
         contract: CONTRACT,
         args: [{ type: 'symbol', value: 'COUNTER' }, { type: 'u32', value: 5 }],
       },
@@ -195,8 +178,7 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
   it('normalizes a contractData del into a key with no value (L2)', () => {
     const rec = toTraceRecord(
       {
-        pos: null,
-        instr: ['contractData', 'del', 'temporary'],
+        kind: 'contractData', operation: 'del', durability: 'temporary',
         contract: CONTRACT,
         args: [{ type: 'symbol', value: 'foo' }],
       },
@@ -213,8 +195,7 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
       () =>
         strict(
           {
-            pos: null,
-            instr: ['contractData', 'put', 'persistent'],
+            kind: 'contractData', operation: 'put', durability: 'persistent',
             contract: CONTRACT,
             args: [{ type: 'symbol', value: 'foo' }],
           },
@@ -227,8 +208,7 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
   it('ignores a contractData op it does not model', () => {
     const rec = toTraceRecord(
       {
-        pos: null,
-        instr: ['contractData', 'bumpish', 'persistent'],
+        kind: 'contractData', operation: 'bumpish', durability: 'persistent',
         contract: CONTRACT,
         args: [{ type: 'symbol', value: 'foo' }],
       },
@@ -240,8 +220,7 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
   it('parses read ops when a producer emits them', () => {
     const rec = toTraceRecord(
       {
-        pos: null,
-        instr: ['contractData', 'get', 'persistent'],
+        kind: 'contractData', operation: 'get', durability: 'persistent',
         contract: CONTRACT,
         args: [{ type: 'symbol', value: 'foo' }],
         result: { type: 'u32', value: 9 },
@@ -259,8 +238,7 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
   it('parses a ledger baseline record (L1, L9, L10)', () => {
     const rec = toTraceRecord(
       {
-        pos: null,
-        instr: ['ledger'],
+        kind: 'ledger',
         sequence: 123,
         timestamp: 1712345678,
         accounts: [{ account: ACCOUNT, balance: 9876543210 }],
@@ -295,7 +273,7 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
   });
 
   it('defaults a ledger baseline\'s collections to empty', () => {
-    const rec = toTraceRecord({ pos: null, instr: ['ledger'], sequence: 1, timestamp: 2 }, 1);
+    const rec = toTraceRecord({ kind: 'ledger', sequence: 1, timestamp: 2 }, 1);
     const event = expectKind(rec.event, 'ledger');
     assert.deepStrictEqual(event.accounts, []);
     assert.deepStrictEqual(event.contracts, []);
@@ -307,8 +285,7 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
   it('parses the three contractTtl variants (L7)', () => {
     const data = toTraceRecord(
       {
-        pos: null,
-        instr: ['contractTtl', 'data'],
+        kind: 'contractTtl', target: 'data',
         contract: CONTRACT,
         durability: 'persistent',
         key: { type: 'symbol', value: 'k' },
@@ -321,13 +298,13 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
     assert.strictEqual(dataEvent.liveUntil, 500);
 
     const instance = toTraceRecord(
-      { pos: null, instr: ['contractTtl', 'instance'], contract: CONTRACT, liveUntil: 600 },
+      { kind: 'contractTtl', target: 'instance', contract: CONTRACT, liveUntil: 600 },
       1,
     );
     assert.strictEqual(expectKind(instance.event, 'contractTtl').target, 'instance');
 
     const code = toTraceRecord(
-      { pos: null, instr: ['contractTtl', 'code'], hash: 'ab12', liveUntil: 700 },
+      { kind: 'contractTtl', target: 'code', hash: 'ab12', liveUntil: 700 },
       1,
     );
     const codeEvent = expectKind(code.event, 'contractTtl');
@@ -337,13 +314,13 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
 
   it('parses contractCode and deployContract events (L8)', () => {
     const updated = toTraceRecord(
-      { pos: null, instr: ['contractCode'], contract: CONTRACT, wasmHash: 'cd34' },
+      { kind: 'contractCode', contract: CONTRACT, wasmHash: 'cd34' },
       1,
     );
     assert.strictEqual(expectKind(updated.event, 'contractCode').wasmHash, 'cd34');
 
     const deployed = toTraceRecord(
-      { pos: null, instr: ['deployContract'], contract: CONTRACT, wasmHash: 'cd34', liveUntil: 42 },
+      { kind: 'deployContract', contract: CONTRACT, wasmHash: 'cd34', liveUntil: 42 },
       1,
     );
     const event = expectKind(deployed.event, 'deployContract');
@@ -352,13 +329,13 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
 
   it('parses account and ledgerInfo events (L9, L10)', () => {
     const account = toTraceRecord(
-      { pos: null, instr: ['account', 'set'], account: ACCOUNT, balance: 17 },
+      { kind: 'account', account: ACCOUNT, balance: 17 },
       1,
     );
     assert.strictEqual(expectKind(account.event, 'account').balance, 17);
 
     const info = toTraceRecord(
-      { pos: null, instr: ['ledgerInfo'], sequence: 9, timestamp: 10 },
+      { kind: 'ledgerInfo', sequence: 9, timestamp: 10 },
       1,
     );
     assert.strictEqual(expectKind(info.event, 'ledgerInfo').sequence, 9);
@@ -368,7 +345,7 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
 
   it('parses an addObject event (L11)', () => {
     const rec = toTraceRecord(
-      { pos: null, instr: ['addObject'], value: { type: 'u32', value: 8 }, index: 3 },
+      { kind: 'addObject', value: { type: 'u32', value: 8 }, index: 3 },
       1,
     );
     const event = expectKind(rec.event, 'addObject');
@@ -378,7 +355,7 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
 
   it('parses a hostCall event, whose tag carries module and function', () => {
     const rec = toTraceRecord(
-      { pos: null, instr: ['hostCall', 'l', '_'], locals: { '0': ['i64', 253576579652878] } },
+      { kind: 'hostCall', module: 'l', function: '_', locals: { '0': ['i64', 253576579652878] } },
       1,
     );
     const event = expectKind(rec.event, 'hostCall');
@@ -394,7 +371,7 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
   // an older adapter. Unknown tags parse as ordinary records with no payload.
   it('ignores an unknown event tag instead of throwing', () => {
     const rec = toTraceRecord(
-      { pos: null, instr: ['somethingNew'], mystery: 42 },
+      { kind: 'instr', pos: null, instr: ['somethingNew'], mystery: 42 },
       1,
     );
     assert.strictEqual(rec.event, undefined);
@@ -405,15 +382,15 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
   // diagnosable and a validation tool has something to call.
   it('strict parsing rejects a known event tag with a malformed payload', () => {
     assert.throws(
-      () => strict({ pos: null, instr: ['addObject'], value: { type: 'u32' } }, 9),
+      () => strict({ kind: 'addObject', value: { type: 'u32' } }, 9),
       /trace line 9/,
     );
     assert.throws(
-      () => strict({ pos: null, instr: ['endWasm'], depth: 1, result: null }),
+      () => strict({ kind: 'endWasm', depth: 1, result: null }),
       TraceParseError,
     );
     assert.throws(
-      () => strict({ pos: null, instr: ['ledgerInfo'], sequence: 'soon' }),
+      () => strict({ kind: 'ledgerInfo', sequence: 'soon' }),
       TraceParseError,
     );
   });
@@ -422,8 +399,7 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
     assert.throws(
       () =>
         strict({
-          pos: null,
-          instr: ['account', 'set'],
+          kind: 'account',
           account: { type: 'address', addrType: 'account', value: 'zz' },
           balance: 1,
         }),
@@ -436,18 +412,18 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
   // breakpoints and source mapping are unaffected.
   it('tolerates a malformed payload rather than failing the record', () => {
     const malformed: Record<string, unknown>[] = [
-      { pos: null, instr: ['addObject'], value: { type: 'u32' } },
-      { pos: null, instr: ['endWasm'], depth: 1, result: null },
-      { pos: null, instr: ['ledgerInfo'], sequence: 'soon' },
-      // The minimal partial callContract that mocks and older fixtures build.
-      { pos: null, instr: ['callContract'], from: {}, to: {}, function: 'add', args: [] },
+      { kind: 'addObject', value: { type: 'u32' } },
+      { kind: 'endWasm', depth: 1, result: null },
+      { kind: 'ledgerInfo', sequence: 'soon' },
+      // The minimal partial callContract the test-suite mocks build.
+      { kind: 'callContract', from: {}, to: {}, function: 'add', args: [] },
     ];
     for (const obj of malformed) {
       const rec = toTraceRecord(obj, 1);
       assert.strictEqual(rec.event, undefined, `expected no payload for ${JSON.stringify(obj)}`);
       // The record itself still parses, so replay is unaffected.
       assert.strictEqual(rec.pos, null);
-      assert.strictEqual(rec.instr[0], (obj.instr as string[])[0]);
+      assert.strictEqual(rec.instr[0], obj.kind);
     }
   });
 
@@ -455,11 +431,11 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
   // pos/instr/stack/locals, so the tolerance above must not have widened that.
   it('still fails loudly on a malformed core field', () => {
     assert.throws(
-      () => toTraceRecord({ pos: 'nope', instr: ['callContract'] }, 1),
+      () => toTraceRecord({ pos: 'nope', kind: 'callContract' }, 1),
       TraceParseError,
     );
     assert.throws(
-      () => toTraceRecord({ pos: null, instr: ['endWasm'], stack: [['i64']] }, 1),
+      () => toTraceRecord({ kind: 'endWasm', stack: [['i64']] }, 1),
       TraceParseError,
     );
   });

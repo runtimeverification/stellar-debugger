@@ -80,11 +80,11 @@ describe('TurnkeyPipeline (against mock komet-node)', () => {
     // is caught even when the real-node e2e can't run (no binary installed).
     await mock.stop();
     const eventTrace = [
-      '{"pos":null,"instr":["callContract"],"from":{},"to":{},"function":"add","args":[],"depth":1,"storage":[]}',
-      '{"pos":3,"instr":["const","i32",1],"stack":[],"locals":{}}',
-      '{"pos":null,"instr":["hostCall","l","_"],"locals":{"0":["i64",1]}}',
-      '{"pos":5,"instr":["return"],"stack":[["u32",11]],"locals":{}}',
-      '{"pos":null,"instr":["endWasm"],"success":true,"depth":1,"result":{"type":"u32","value":11}}',
+      '{"kind":"callContract","from":{},"to":{},"function":"add","args":[],"depth":1,"storage":[]}',
+      '{"kind":"instr","pos":3,"instr":["const","i32",1],"stack":[],"locals":{}}',
+      '{"kind":"hostCall","module":"l","function":"_","locals":{"0":["i64",1]}}',
+      '{"kind":"instr","pos":5,"instr":["return"],"stack":[["u32",11]],"locals":{}}',
+      '{"kind":"endWasm","success":true,"depth":1,"result":{"type":"u32","value":11}}',
     ].join('\n');
     mock = new MockKometNode({ trace: eventTrace });
     port = await mock.start();
