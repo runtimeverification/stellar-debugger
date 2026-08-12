@@ -7,6 +7,7 @@
     "src/**/*.d.ts",
     "src/debugAdapter/types.ts",
     "src/sourcemap/SourceMapper.ts",
+    "src/cli/shell.ts",
     "src/trace/main.ts",
     "src/server/main.ts"
   ],

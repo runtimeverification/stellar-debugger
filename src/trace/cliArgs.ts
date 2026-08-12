@@ -1,14 +1,15 @@
 /**
- * Pure argv parsing for the one-shot trace CLI (`soroban-trace`).
+ * Argv parsing for the one-shot trace CLI (`soroban-trace`).
  *
- * Extracted from the coverage-excluded `main.ts` so the flag semantics can be
- * unit-tested directly. `parseTraceArgs` is the devex front door: it resolves
- * `--help`, validates tokens and mode selection, and maps argv onto a
- * discriminated union the (coverage-excluded) shell dispatches on. PURE: never
- * reads process.argv, never prints, never exits.
+ * `parseTraceArgs` is the devex front door: it resolves `--help`, validates
+ * tokens and mode selection, and maps argv onto a discriminated union the
+ * (coverage-excluded) shell dispatches on. PURE: never reads process.argv, never
+ * prints, never exits.
  */
 
 import { SorobanLaunchArgs } from '../debugAdapter/types';
+import { CliParse } from '../cli/shell';
+import { FlagSpec, isNonNegativeInt, parseFlags, wantsHelp } from '../cli/flags';
 
 /** The `soroban-trace` help text. */
 export const TRACE_USAGE = `soroban-trace — emit a Rust source-level execution trace as JSONL
@@ -35,163 +36,157 @@ Examples:
   soroban-trace --contract . --function add --args-json '{"a":1,"b":2}'
 `;
 
+/** The projection options `soroban-trace` passes through to `runCliTrace`. */
+interface TraceOpts {
+  maxDepth?: number;
+  maxChildren?: number;
+  allowNoSource?: boolean;
+  justMyCode?: boolean;
+}
+
 /** Outcome of parsing `soroban-trace` argv. */
-export type TraceParse =
-  | { kind: 'help'; text: string }
-  | { kind: 'error'; message: string }
-  | {
-      kind: 'run';
-      launch: SorobanLaunchArgs;
-      /** Echoed for the trace's meta record: the invoked function (live mode). */
-      function?: string;
-      /** Echoed for the trace's meta record: the symbol-supplying wasm. */
-      wasm?: string;
-      out?: string;
-      opts: { maxDepth?: number; maxChildren?: number; allowNoSource?: boolean; justMyCode?: boolean };
-    };
+export type TraceParse = CliParse<{
+  launch: SorobanLaunchArgs;
+  /** Echoed for the trace's meta record: the invoked function (live mode). */
+  function?: string;
+  /** Echoed for the trace's meta record: the symbol-supplying wasm. */
+  wasm?: string;
+  out?: string;
+  opts: TraceOpts;
+}>;
 
-const TRACE_HINT = "Run 'soroban-trace --help' for usage.";
+const HINT = "Run 'soroban-trace --help' for usage.";
 
-/** Value-taking flags for `soroban-trace`. */
-const TRACE_VALUE_FLAGS = new Set([
-  '--raw-trace',
-  '--wasm',
-  '--contract',
-  '--function',
-  '--args-json',
-  '--out',
-  '--depth',
-  '--max-children',
-]);
-
-/** Whether a token is being used as an option (leading dash). */
-function looksLikeFlag(token: string): boolean {
-  return token.startsWith('-');
-}
-
-/** Whether a string is a non-negative integer literal. */
-function isNonNegInt(s: string): boolean {
-  return /^\d+$/.test(s);
-}
+const FLAGS: FlagSpec = {
+  value: [
+    '--raw-trace',
+    '--wasm',
+    '--contract',
+    '--function',
+    '--args-json',
+    '--out',
+    '--depth',
+    '--max-children',
+  ],
+  switches: ['--allow-no-source', '--no-just-my-code'],
+};
 
 /**
  * Devex front door for `soroban-trace`: resolve `--help`, validate tokens and
  * mode selection, and map argv onto a `TraceParse`. Pure.
  */
 export function parseTraceArgs(argv: string[]): TraceParse {
-  // --help / -h wins anywhere.
-  if (argv.includes('-h') || argv.includes('--help')) {
+  if (wantsHelp(argv)) {
     return { kind: 'help', text: TRACE_USAGE };
   }
+  const err = (message: string): TraceParse => ({ kind: 'error', message: `${message} ${HINT}` });
 
-  const err = (message: string): TraceParse => ({
-    kind: 'error',
-    message: `${message} ${TRACE_HINT}`,
-  });
-
-  const values: Record<string, string> = {};
-  let allowNoSource = false;
-  let noJustMyCode = false;
-
-  for (let i = 0; i < argv.length; i++) {
-    const token = argv[i];
-    if (TRACE_VALUE_FLAGS.has(token)) {
-      const next = argv[i + 1];
-      if (next === undefined || looksLikeFlag(next)) {
-        return err(`Missing value for ${token}`);
-      }
-      values[token] = next;
-      i++;
-    } else if (token === '--allow-no-source') {
-      allowNoSource = true;
-    } else if (token === '--no-just-my-code') {
-      noJustMyCode = true;
-    } else if (looksLikeFlag(token)) {
-      return err(`Unknown option: ${token}`);
-    } else {
-      return err(`Unexpected argument: ${token}`);
-    }
+  const parsed = parseFlags(argv, FLAGS);
+  if (!parsed.ok) {
+    return err(parsed.message);
   }
-
+  const { values, switches } = parsed;
   const rawTrace = values['--raw-trace'];
   const wasmPath = values['--wasm'];
   const contract = values['--contract'];
   const fn = values['--function'];
-  const argsJson = values['--args-json'];
   const out = values['--out'];
   const depth = values['--depth'];
   const maxChildren = values['--max-children'];
 
-  // Mode selection.
+  // Mode selection: replay needs a trace, live needs something to run.
   if (rawTrace === undefined && contract === undefined && wasmPath === undefined) {
     return err(
       'Specify --raw-trace for offline replay, or --contract/--wasm with --function for live mode.',
     );
   }
-  // Live mode (no --raw-trace) requires --function.
   if (rawTrace === undefined && fn === undefined) {
     return err('--function is required in live mode.');
   }
 
-  // --args-json must JSON.parse to an object keyed by the function's parameter
-  // names; the contract's own spec encodes the values (see soroban/specEncode).
-  let args: Record<string, unknown> | undefined;
-  if (argsJson !== undefined) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(argsJson);
-    } catch (e) {
-      return err(`Invalid --args-json: ${e instanceof Error ? e.message : String(e)}`);
-    }
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      return err('Invalid --args-json: expected a JSON object keyed by parameter name.');
-    }
-    args = parsed as Record<string, unknown>;
+  const args = parseArgsJson(values['--args-json']);
+  if (typeof args === 'string') {
+    return err(args);
   }
 
-  // Numeric options must be non-negative integers.
-  if (depth !== undefined && !isNonNegInt(depth)) {
+  if (depth !== undefined && !isNonNegativeInt(depth)) {
     return err('--depth must be a non-negative integer.');
   }
-  if (maxChildren !== undefined && !isNonNegInt(maxChildren)) {
+  if (maxChildren !== undefined && !isNonNegativeInt(maxChildren)) {
     return err('--max-children must be a non-negative integer.');
   }
 
-  // Build the launch config mode-aware. In REPLAY mode (`--raw-trace`) the
-  // config stays a top-level `rawTrace` (+ optional replay-symbol `wasmPath`).
-  // In LIVE mode the CLI is a single-invoke front end that desugars to the one
-  // `transactions` schema: a deploy of the `--contract`/`--wasm` source under a
-  // fixed handle, then an invoke of `--function` (guaranteed present here by the
-  // "--function is required in live mode" guard above).
-  let launch: SorobanLaunchArgs;
-  if (rawTrace !== undefined) {
-    launch = { rawTrace, ...(wasmPath !== undefined ? { wasmPath } : {}) };
-  } else {
-    launch = {
-      transactions: [
-        {
-          kind: 'deploy',
-          id: 'contract',
-          ...(wasmPath !== undefined ? { wasm: wasmPath } : {}),
-          ...(contract !== undefined ? { contract } : {}),
-        },
-        {
-          kind: 'invoke',
-          contract: 'contract',
-          function: fn!,
-          ...(args !== undefined ? { args } : {}),
-        },
-      ],
-    };
-  }
-
-  const opts: { maxDepth?: number; maxChildren?: number; allowNoSource?: boolean; justMyCode?: boolean } =
-    {};
+  const opts: TraceOpts = {};
   if (depth !== undefined) opts.maxDepth = Number(depth);
   if (maxChildren !== undefined) opts.maxChildren = Number(maxChildren);
-  if (allowNoSource) opts.allowNoSource = true;
+  if (switches.has('--allow-no-source')) opts.allowNoSource = true;
   // Only set when explicitly disabled; absence means "default true" downstream (S21).
-  if (noJustMyCode) opts.justMyCode = false;
+  if (switches.has('--no-just-my-code')) opts.justMyCode = false;
 
-  return { kind: 'run', launch, function: fn, wasm: wasmPath, out, opts };
+  return {
+    kind: 'run',
+    launch:
+      rawTrace !== undefined
+        ? replayLaunch(rawTrace, wasmPath)
+        : liveLaunch(contract, wasmPath, fn!, args),
+    function: fn,
+    wasm: wasmPath,
+    out,
+    opts,
+  };
+}
+
+/** REPLAY mode: a top-level `rawTrace` plus the optional replay-symbol wasm. */
+function replayLaunch(rawTrace: string, wasmPath: string | undefined): SorobanLaunchArgs {
+  return { rawTrace, ...(wasmPath !== undefined ? { wasmPath } : {}) };
+}
+
+/**
+ * LIVE mode: the CLI is a single-invoke front end for the one `transactions`
+ * schema, desugaring to a deploy of the `--contract`/`--wasm` source under a
+ * fixed handle followed by an invoke of `--function`.
+ */
+function liveLaunch(
+  contract: string | undefined,
+  wasmPath: string | undefined,
+  fn: string,
+  args: Record<string, unknown> | undefined,
+): SorobanLaunchArgs {
+  return {
+    transactions: [
+      {
+        kind: 'deploy',
+        id: 'contract',
+        ...(wasmPath !== undefined ? { wasm: wasmPath } : {}),
+        ...(contract !== undefined ? { contract } : {}),
+      },
+      {
+        kind: 'invoke',
+        contract: 'contract',
+        function: fn,
+        ...(args !== undefined ? { args } : {}),
+      },
+    ],
+  };
+}
+
+/**
+ * `--args-json` must parse to an object keyed by the function's parameter names;
+ * the contract's own spec encodes the values (see soroban/specEncode). Returns
+ * the parsed object, `undefined` when the flag is absent, or an error message.
+ */
+function parseArgsJson(json: string | undefined): Record<string, unknown> | undefined | string {
+  if (json === undefined) {
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch (e) {
+    return `Invalid --args-json: ${e instanceof Error ? e.message : String(e)}`;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return 'Invalid --args-json: expected a JSON object keyed by parameter name.';
+  }
+  return parsed as Record<string, unknown>;
 }

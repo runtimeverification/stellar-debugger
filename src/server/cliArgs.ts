@@ -1,10 +1,13 @@
 /**
- * Pure argv parsing for the standalone TCP DAP server CLI (`soroban-dap`).
+ * Argv parsing for the standalone TCP DAP server CLI (`soroban-dap`).
  *
  * `parseServerArgs` resolves `--help`, validates `--host`/`--port`, and maps a
  * raw argv slice onto a discriminated union the (coverage-excluded) shell
  * dispatches on. PURE: never reads process.argv, never prints, never exits.
  */
+
+import { CliParse } from '../cli/shell';
+import { FlagSpec, isNonNegativeInt, parseFlags, wantsHelp } from '../cli/flags';
 
 /** The `soroban-dap` help text. */
 export const SERVER_USAGE = `soroban-dap — serve the Soroban debug adapter over a TCP socket
@@ -21,67 +24,36 @@ Connect any DAP client to the port (e.g. VS Code "debugServer": <port>).
 `;
 
 /** Outcome of parsing `soroban-dap` argv. */
-export type ServerParse =
-  | { kind: 'help'; text: string }
-  | { kind: 'error'; message: string }
-  | { kind: 'run'; host?: string; port: number };
+export type ServerParse = CliParse<{ host?: string; port: number }>;
 
-const SERVER_HINT = "Run 'soroban-dap --help' for usage.";
+const HINT = "Run 'soroban-dap --help' for usage.";
+const DEFAULT_PORT = 4711;
+const MAX_PORT = 65535;
 
-/** Value-taking flags for `soroban-dap`. */
-const SERVER_VALUE_FLAGS = new Set(['--host', '--port']);
-
-/** Whether a token is being used as an option (leading dash). */
-function looksLikeFlag(token: string): boolean {
-  return token.startsWith('-');
-}
+const FLAGS: FlagSpec = { value: ['--host', '--port'] };
 
 /**
  * Devex front door for `soroban-dap`: resolve `--help`, validate tokens and
  * `--port`, and map argv onto a `ServerParse`. Pure.
  */
 export function parseServerArgs(argv: string[]): ServerParse {
-  // --help / -h wins anywhere.
-  if (argv.includes('-h') || argv.includes('--help')) {
+  if (wantsHelp(argv)) {
     return { kind: 'help', text: SERVER_USAGE };
   }
+  const err = (message: string): ServerParse => ({ kind: 'error', message: `${message} ${HINT}` });
 
-  const err = (message: string): ServerParse => ({
-    kind: 'error',
-    message: `${message} ${SERVER_HINT}`,
-  });
-
-  const values: Record<string, string> = {};
-
-  for (let i = 0; i < argv.length; i++) {
-    const token = argv[i];
-    if (SERVER_VALUE_FLAGS.has(token)) {
-      const next = argv[i + 1];
-      if (next === undefined || looksLikeFlag(next)) {
-        return err(`Missing value for ${token}`);
-      }
-      values[token] = next;
-      i++;
-    } else if (looksLikeFlag(token)) {
-      return err(`Unknown option: ${token}`);
-    } else {
-      return err(`Unexpected argument: ${token}`);
-    }
+  const parsed = parseFlags(argv, FLAGS);
+  if (!parsed.ok) {
+    return err(parsed.message);
   }
 
-  const host = values['--host'];
-  const portRaw = values['--port'];
-
-  let port = 4711;
-  if (portRaw !== undefined) {
-    if (!/^\d+$/.test(portRaw)) {
-      return err('--port must be an integer between 0 and 65535.');
-    }
-    port = Number(portRaw);
-    if (port > 65535) {
-      return err('--port must be an integer between 0 and 65535.');
-    }
+  const host = parsed.values['--host'];
+  const portRaw = parsed.values['--port'];
+  if (portRaw === undefined) {
+    return { kind: 'run', host, port: DEFAULT_PORT };
   }
-
-  return { kind: 'run', host, port };
+  if (!isNonNegativeInt(portRaw) || Number(portRaw) > MAX_PORT) {
+    return err(`--port must be an integer between 0 and ${MAX_PORT}.`);
+  }
+  return { kind: 'run', host, port: Number(portRaw) };
 }
