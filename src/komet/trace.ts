@@ -39,6 +39,24 @@
  * present — that is the contract this module encodes. Mapping `pos` to source
  * is the job of the SourceMapper abstraction, not this parser.
  *
+ * ## Two wire formats
+ *
+ * komet v0.1.87 reorganised the trace. Every record now names itself with a
+ * top-level `kind` — `"instr"` for the instruction records above, or the
+ * operation name for a Soroban VM record — and each VM record spells its
+ * operands as named fields instead of packing them into `instr`:
+ *
+ *   {"instr": ["contractData", "put", "temporary"], ...}                  (before)
+ *   {"kind": "contractData", "operation": "put", "durability": "temporary", ...}
+ *
+ * Both are read here, and both normalize onto the ONE model above: a record
+ * without `kind` is the older format, and a `kind` other than `"instr"` has its
+ * `instr` array reconstructed in the older spelling (`["contractData", op,
+ * durability]`, `["hostCall", module, function]`, `[kind]` otherwise). So the
+ * format split is contained in this file — `traceEvents.ts` and every consumer
+ * of a `TraceRecord` see one shape and need to know nothing about which komet
+ * produced the trace. Recorded traces from before the change keep replaying.
+ *
  * This module is pure (no `vscode` / DAP imports) so it can be unit-tested in
  * plain Node against golden fixtures.
  */
@@ -114,6 +132,28 @@ function isTypedValue(v: unknown): v is TypedValue {
 }
 
 /**
+ * The `instr` array for a `kind`-tagged Soroban VM record, in the older
+ * spelling the model keeps (see the module header). Only the two records whose
+ * operands used to ride in `instr` need rebuilding; the rest carry their payload
+ * in named fields already, so the tag alone is the whole array.
+ *
+ * The operands are appended only when they are strings, leaving a malformed
+ * record to be rejected by the event parser's own validation — which reports it
+ * per event kind — rather than here.
+ */
+function instrForKind(kind: string, obj: Record<string, unknown>): [string, ...unknown[]] {
+  const operands =
+    kind === 'contractData'
+      ? [obj.operation, obj.durability]
+      : kind === 'hostCall'
+        ? [obj.module, obj.function]
+        : kind === 'contractTtl'
+          ? [obj.target]
+          : [];
+  return [kind, ...operands.filter((operand) => typeof operand === 'string')];
+}
+
+/**
  * Validate and normalize a parsed JSON object into a TraceRecord. Throws on a
  * shape that does not match the documented contract so that a backend change is
  * caught loudly rather than silently mis-rendered.
@@ -124,12 +164,26 @@ export function toTraceRecord(value: unknown, lineNo: number): TraceRecord {
   }
   const obj = value as Record<string, unknown>;
 
-  const pos = obj.pos;
+  // A record without `kind` is the pre-v0.1.87 format, where an instruction and
+  // a VM event are told apart by `instr[0]` alone; both are instruction-shaped
+  // as far as this function is concerned.
+  const kind = obj.kind;
+  if (kind !== undefined && typeof kind !== 'string') {
+    throw new TraceParseError(`trace line ${lineNo}: 'kind' must be a string`);
+  }
+  const instructionShaped = kind === undefined || kind === 'instr';
+
+  // A VM record carries no position: it does not come from anywhere in the
+  // binary. An instruction record must state one, even if null.
+  const pos = obj.pos ?? null;
   if (pos !== null && typeof pos !== 'number') {
     throw new TraceParseError(`trace line ${lineNo}: 'pos' must be a number or null`);
   }
+  if (instructionShaped && obj.pos === undefined) {
+    throw new TraceParseError(`trace line ${lineNo}: 'pos' is required on an instruction record`);
+  }
 
-  if (!Array.isArray(obj.instr) || obj.instr.length === 0 || typeof obj.instr[0] !== 'string') {
+  if (instructionShaped && (!Array.isArray(obj.instr) || obj.instr.length === 0 || typeof obj.instr[0] !== 'string')) {
     throw new TraceParseError(`trace line ${lineNo}: 'instr' must be a non-empty array starting with a string`);
   }
 
@@ -189,7 +243,9 @@ export function toTraceRecord(value: unknown, lineNo: number): TraceRecord {
     });
   }
 
-  const instr = obj.instr as [string, ...unknown[]];
+  const instr = instructionShaped
+    ? (obj.instr as [string, ...unknown[]])
+    : instrForKind(kind as string, obj);
 
   return {
     pos: pos as number | null,

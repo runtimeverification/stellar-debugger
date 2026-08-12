@@ -35,6 +35,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Traces from komet v0.1.87 and newer are readable again. That release renamed
+  the trace's record tags and moved their operands into named fields, which the
+  parser rejected outright — the first contract call in a trace failed the whole
+  session. Both formats are now read and normalized to one shape, so recorded
+  traces from older komets keep replaying.
+
 - Debug sessions start ~6 seconds faster: rendering Stellar addresses no longer
   pulls `@stellar/stellar-sdk` into the debug adapter's module graph (a local
   strkey encoder replaces it), which had been delaying every session past the

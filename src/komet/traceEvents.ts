@@ -3,13 +3,18 @@
  * trace (see docs/state-inspection.md, "What the trace carries").
  *
  * Alongside one record per executed wasm instruction, komet's tracer emits
- * records that are tagged by `instr[0]` and carry a payload shaped for that
- * event rather than the four-field pos/instr/stack/locals shape — the callee's
- * storage on entry to a contract call, every storage write, TTL extensions, the
- * ledger baseline, host object allocations. `parseTraceEvent` turns such a
- * record's extra keys into a typed `TraceEvent`; `komet/trace.ts` hangs the
- * result off `TraceRecord.event` so the existing record fields (and every
- * consumer of them) are untouched.
+ * records that carry a payload shaped for that event rather than the four-field
+ * pos/instr/stack/locals shape — the callee's storage on entry to a contract
+ * call, every storage write, TTL extensions, the ledger baseline, host object
+ * allocations. `parseTraceEvent` turns such a record's extra keys into a typed
+ * `TraceEvent`; `komet/trace.ts` hangs the result off `TraceRecord.event` so the
+ * existing record fields (and every consumer of them) are untouched.
+ *
+ * The event is identified here by `instr[0]`, and its inline operands by
+ * `instr[1..]`. That is the older wire spelling; komet >= v0.1.87 tags records
+ * with `kind` and names those operands instead. `trace.ts` normalizes the newer
+ * form back onto `instr` before calling in (see its "Two wire formats"), so this
+ * module reads one shape and neither format appears below.
  *
  * Unlike the core record fields, an event payload is **auxiliary**: stepping,
  * breakpoints and source mapping do not depend on it, only the state views do.

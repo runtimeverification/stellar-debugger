@@ -13,7 +13,7 @@ For how the cursor *moves*, see [`stepping.md`](stepping.md). This document is o
 
 ### What the trace carries
 
-komet's tracer emits one record per executed wasm instruction, interleaved with **Soroban VM event records** — records tagged by their `instr[0]` rather than carrying the four-field instruction shape. The full set is documented in [komet's `docs/tracing.md`](https://github.com/runtimeverification/komet/blob/master/docs/tracing.md); the debugger consumes these:
+komet's tracer emits one record per executed wasm instruction, interleaved with **Soroban VM event records** — records naming an operation rather than carrying the four-field instruction shape. The full set is documented in [komet's `docs/tracing.md`](https://github.com/runtimeverification/komet/blob/master/docs/tracing.md); the debugger consumes these:
 
 | Tag | Carries | Feeds |
 |---|---|---|
@@ -31,6 +31,8 @@ komet's tracer emits one record per executed wasm instruction, interleaved with 
 Event payloads are **auxiliary**: stepping, breakpoints and source mapping depend only on a record's core fields (`pos`/`instr`/`stack`/`locals`/`mem`), never on an event payload.
 So payload parsing inverts the fail-loudly policy the core fields keep: an unrecognized tag, an event kind the adapter does not model, and a payload that does not validate all yield a record with **no** event payload, and the state views degrade per G4/L14.
 A komet release that adds or reshapes an event therefore cannot break a debug session.
+
+How a record states its tag depends on the komet that produced it: up to v0.1.86 it is `instr[0]`, with inline operands in `instr[1..]`; from v0.1.87 it is a top-level `kind`, with those operands as named fields. Both parse, and `komet/trace.ts` normalizes them onto one model before any of the rules below apply — so nothing in this spec depends on which format a trace is in.
 A strict parser (`strictParseTraceEvent`) keeps the payload contract pinned by the tests and available to a trace-validation tool, but no session depends on it.
 A malformed *core* field remains a hard error.
 
