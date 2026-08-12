@@ -128,14 +128,23 @@ debugAdapter/
   SorobanDebugSession   DAP handlers (cursor moves + StoppedEvents, disassembly)
   TraceModel            records, cursor, call-depth, line + instruction stepping
   artifacts.ts          wasm bytes -> { mapper, disassembly, validated positions }
+  MemoryImage           linear memory at a cursor (snapshot-on-change index)
+  LedgerImage           Stellar ledger at a cursor: storage/TTLs, balances,
+                        ledger info, host objects, call stack; undoes the writes
+                        of a trapped sub-call (docs/state-inspection.md)
   backends/
     RawTraceBackend     replay a JSONL trace file (+ optional wasmPath for symbols)
     LiveBackend         turnkey build + spawn + deploy + trace
 komet/
   trace.ts              JSONL -> TraceRecord[] (K-style mnemonics, section-relative pos)
+  traceEvents.ts        Soroban VM event payloads -> TraceEvent (tolerant: a
+                        malformed/unknown payload degrades, never throws)
   mnemonics.ts          K-style instr arrays -> wasm mnemonics ('i64.const 255')
   KometClient.ts        JSON-RPC client (getHealth/sendTransaction/traceTransaction/...)
 soroban/scval.ts        launch args -> ScVals (@stellar/stellar-sdk)
+soroban/scvalJson.ts    trace ScVal JSON -> DecodedValue (display + lazy children)
+soroban/strkey.ts       raw address bytes -> C…/G… strkey (SDK-free: the SDK costs
+                        ~6s of module load inside the adapter)
 wasm/
   sections.ts           wasm section walker (offsets, custom-section lookup)
   Disassembly.ts        static disassembly (wasmparser), code-offset addressed

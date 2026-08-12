@@ -14,6 +14,9 @@ import { makeRuntimeState } from '../debugAdapter/runtimeState';
 import { MemoryImage } from '../debugAdapter/MemoryImage';
 import { renderInstr } from '../komet/mnemonics';
 import { DecodedValue } from '../dwarf/ValueDecoder';
+import { LedgerImage } from '../debugAdapter/LedgerImage';
+import { renderScVal, renderAddress, summarizeScVal } from '../soroban/scvalJson';
+import { Durability } from '../komet/trace';
 
 /** A serializable single-stop projection. */
 export interface SourceStop {
@@ -32,6 +35,52 @@ export interface SourceStop {
   /** Mapped source location, or null when unmapped. */
   source: { path: string; line: number; column?: number } | null;
   variables: TraceVar[];
+  /**
+   * The executing module's wasm globals, keyed by MODULE-RELATIVE global index
+   * (docs/state-inspection.md, G1). Omitted entirely when the record carries
+   * none, rather than emitted empty (G4).
+   */
+  globals?: Record<string, { type: string; value: string }>;
+  /**
+   * Stellar ledger state at this stop. Omitted entirely when the trace carries
+   * no ledger information (L14).
+   */
+  ledger?: StopLedger;
+}
+
+/** The ledger projection of one stop (docs/state-inspection.md, Presentation). */
+export interface StopLedger {
+  /** Executing contract as a `C…` strkey, or null before any contract call. */
+  contract: string | null;
+  storage: StopStorageEntry[];
+  accounts: { account: string; balance: number }[];
+  /** Ledger sequence/timestamp, omitted when the trace never states them. */
+  info?: { sequence: number; timestamp: number };
+  hostObjects: { index: number; value: string }[];
+  /** Open contract calls, innermost first. */
+  callStack: {
+    from: string;
+    to: string;
+    function: string;
+    depth: number;
+    args: string[];
+  }[];
+}
+
+/** One storage entry of a stop's ledger projection. */
+export interface StopStorageEntry {
+  durability: Durability;
+  /** Compact `type(value)` form of the key. */
+  key: string;
+  /** Display form of the value. */
+  value: string;
+  liveUntil: number;
+  /**
+   * Set only when this stop was projected with a `previousIndex` AND the entry
+   * changed across that span. DAP has no vocabulary for "this changed", so the
+   * flag exists here, where a consumer diffing two stops needs it.
+   */
+  changed?: boolean;
 }
 
 /** One decoded variable, eagerly expanded within budget. */
@@ -47,12 +96,19 @@ export interface TraceVar {
   truncated?: boolean;
 }
 
-/** Per-stop expansion budget plus an optional pre-built memory image. */
+/** Per-stop expansion budget plus optional pre-built state images. */
 export interface ProjectOpts {
   maxDepth?: number;
   maxChildren?: number;
   maxNodes?: number;
   memory?: MemoryImage;
+  /** Reused across a whole run rather than rebuilt per stop. */
+  ledger?: LedgerImage;
+  /**
+   * The previous stop's trace index. Supplying it turns on the `changed` flag on
+   * storage entries that moved since then; without it no entry is flagged.
+   */
+  previousIndex?: number;
 }
 
 const DEFAULT_MAX_DEPTH = 3;
@@ -159,7 +215,7 @@ export function projectSourceStop(
 
   const step = stopModel.runStarts.indexOf(index);
 
-  return {
+  const stop: SourceStop = {
     step,
     traceIndex: index,
     depth: stopModel.depths[index],
@@ -169,4 +225,67 @@ export function projectSourceStop(
     source,
     variables,
   };
+
+  // G4: present only when this record actually carries globals.
+  if (record.globals !== undefined) {
+    const globals: Record<string, { type: string; value: string }> = {};
+    for (const [slot, [type, value]] of Object.entries(record.globals)) {
+      globals[slot] = { type, value: String(value) };
+    }
+    stop.globals = globals;
+  }
+
+  // L14: present only when the trace carries ledger information.
+  const ledger = opts?.ledger ?? new LedgerImage(resolved.model.records);
+  if (ledger.hasLedger()) {
+    stop.ledger = projectLedger(ledger, index, opts?.previousIndex);
+  }
+
+  return stop;
+}
+
+/** Project the ledger at `index`, flagging what moved since `previousIndex`. */
+function projectLedger(
+  ledger: LedgerImage,
+  index: number,
+  previousIndex?: number,
+): StopLedger {
+  const contract = ledger.executingContractAt(index);
+  const changed =
+    previousIndex === undefined ? undefined : ledger.changedSince(previousIndex, index);
+
+  const info = ledger.ledgerInfoAt(index);
+  const projected: StopLedger = {
+    contract: contract === undefined ? null : renderAddress({ addrType: 'contract', value: contract }),
+    storage: ledger.storageAt(index, contract).map((entry) => {
+      const projectedEntry: StopStorageEntry = {
+        durability: entry.durability,
+        key: summarizeScVal(entry.key),
+        value: renderScVal(entry.value).display,
+        liveUntil: entry.liveUntil,
+      };
+      if (changed?.has(entry.id)) {
+        projectedEntry.changed = true;
+      }
+      return projectedEntry;
+    }),
+    accounts: ledger.accountsAt(index).map((account) => ({
+      account: renderAddress({ addrType: 'account', value: account.account }),
+      balance: account.balance,
+    })),
+    hostObjects: ledger
+      .hostObjectsAt(index)
+      .map((object) => ({ index: object.index, value: renderScVal(object.value).display })),
+    callStack: ledger.callStackAt(index).map((frame) => ({
+      from: renderAddress(frame.from),
+      to: renderAddress(frame.to),
+      function: frame.function,
+      depth: frame.depth,
+      args: frame.args.map((arg) => renderScVal(arg).display),
+    })),
+  };
+  if (info !== undefined) {
+    projected.info = info;
+  }
+  return projected;
 }

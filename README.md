@@ -15,7 +15,11 @@ directions.
 - ⏪ **Step backward.** Step back and reverse-continue as easily as going
   forward. Overshot the bug? Just step back. Backward stepping is instant.
 - 🔎 **Inspect state at every step.** See the values in play at the current
-  point of execution.
+  point of execution — your Rust variables, the wasm locals, stack and globals.
+- 🏦 **See the ledger, not just the code.** Contract storage (instance,
+  persistent, temporary) with TTLs, account balances, ledger sequence and close
+  time, the host object table, and the contract-call stack — all at the step
+  you're on, and all time-travelling with you.
 - 🚀 **One click from source to debugger.** Point the debugger at a contract and
   a function; it builds, deploys to a local network, runs the call, and drops
   you into the debug session. No manual setup.

@@ -43,6 +43,21 @@
  * plain Node against golden fixtures.
  */
 
+import { TraceParseError } from './traceError';
+import { parseTraceEvent, TraceEvent } from './traceEvents';
+
+export { TraceParseError } from './traceError';
+export type {
+  TraceEvent,
+  TraceAddress,
+  ScValJson,
+  StorageEntry,
+  AccountEntry,
+  ContractEntry,
+  CodeEntry,
+  Durability,
+} from './traceEvents';
+
 /** A typed value as it appears in a trace record: [wasmType, value]. */
 export type TypedValue = [string, unknown];
 
@@ -86,6 +101,13 @@ export interface TraceRecord {
    * disassembly/DWARF — see debugAdapter/artifacts.ts. Absent in older traces.
    */
   executingContract?: string | null;
+  /**
+   * The typed payload of a Soroban VM event record (storage write, contract-call
+   * boundary, ledger baseline, host object allocation, …), or undefined for an
+   * ordinary instruction record and for event tags this adapter does not model.
+   * See komet/traceEvents.ts and docs/state-inspection.md.
+   */
+  event?: TraceEvent;
 }
 
 /** The opcode mnemonic of a record (e.g. "local.get"). */
@@ -178,22 +200,18 @@ export function toTraceRecord(value: unknown, lineNo: number): TraceRecord {
     throw new TraceParseError(`trace line ${lineNo}: 'executingContract' must be a string or null`);
   }
 
+  const instr = obj.instr as [string, ...unknown[]];
+
   return {
     pos: pos as number | null,
-    instr: obj.instr as [string, ...unknown[]],
+    instr,
     stack: rawStack as TypedValue[],
     locals,
     globals,
     mem,
     executingContract: executingContract as string | null | undefined,
+    event: parseTraceEvent(obj, instr, lineNo),
   };
-}
-
-export class TraceParseError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'TraceParseError';
-  }
 }
 
 /**

@@ -6,7 +6,31 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Stellar ledger inspection.** A new **Ledger** scope shows the chain state at
+  every step: contract storage across all three durabilities with their TTLs,
+  account balances, the ledger sequence and close time, the executing contract's
+  wasm hash and instance TTL, the host object table, and the open contract-call
+  stack. Values render as Soroban types with `C…`/`G…` addresses, and composites
+  expand. Storage is reconstructed from the trace's own call baselines and write
+  events — including undoing the writes of a sub-call that trapped — so it
+  matches what the contract would read. Works on already-recorded traces; no
+  komet-node upgrade needed.
+- **WebAssembly globals.** A new **Globals** scope lists the executing module's
+  globals by module-relative index, for traces that carry them.
+- The `soroban-trace` CLI reports the same state per stop as `globals` and
+  `ledger`, with a `changed` flag marking the storage entries that moved since
+  the previous stop, and `hasGlobals`/`hasLedger` announced in `meta`.
+- New contributor spec: [`docs/state-inspection.md`](docs/state-inspection.md),
+  whose numbered rules (G1–G4, L1–L15) the test suite pins.
+
 ### Fixed
+
+- Debug sessions start ~6 seconds faster: rendering Stellar addresses no longer
+  pulls `@stellar/stellar-sdk` into the debug adapter's module graph (a local
+  strkey encoder replaces it), which had been delaying every session past the
+  DAP handshake timeout.
 
 - Launch argument encoding now rejects invalid integer values instead of
   silently accepting them: non-integer and out-of-range `u32`/`i32` values (the

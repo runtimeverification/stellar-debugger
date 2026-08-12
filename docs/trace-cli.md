@@ -91,6 +91,27 @@ Each `stop` carries the source location, the enclosing function, the call
 `--max-children`). The full `SourceStop` / `TraceVar` field reference is in
 [`trace-cli-internal.md`](./trace-cli-internal.md).
 
+### Machine state: `globals` and `ledger`
+
+When the trace carries them, a `stop` also reports the machine and chain state at that point — the same state the editor's **Globals** and **Ledger** scopes show. `meta` announces both up front (`hasGlobals`, `hasLedger`) so a consumer can branch without probing every stop:
+
+```jsonl
+{"kind":"meta","records":812,"stops":9,"hasDwarf":true,"hasGlobals":true,"hasLedger":true}
+{"kind":"stop","step":3,"traceIndex":214,"pc":"0x2d","instr":"i32.add",
+ "globals":{"0":{"type":"i32","value":"1048560"}},
+ "ledger":{"contract":"CADQO…","storage":[{"durability":"instance","key":"symbol(COUNTER)","value":"5","liveUntil":100,"changed":true}],
+           "accounts":[{"account":"GADQO…","balance":9876543210}],
+           "info":{"sequence":42,"timestamp":1712345678},
+           "hostObjects":[{"index":0,"value":"COUNTER"}],
+           "callStack":[{"from":"GADQO…","to":"CADQO…","function":"increment","depth":1,"args":["5"]}]}}
+```
+
+- `globals` is keyed by **module-relative global index** — the same index space DWARF uses — so it lines up with a variable's location expression.
+- `ledger.storage` covers the executing contract across all three durabilities, each entry with its `liveUntil`. `changed: true` marks entries that moved since the **previous stop**, so a diff of two whole trees is unnecessary; it is absent on the first stop and on entries that did not move.
+- Both keys are omitted entirely for a trace that does not carry them, rather than emitted empty.
+
+Storage is reconstructed from the trace's own contract-call baselines and write events, including undoing the writes of a sub-call that trapped, so the values shown are what the contract would actually read. The rules are specified in [`state-inspection.md`](./state-inspection.md).
+
 Add `--out trace.jsonl` to write to a file instead of stdout. Other bundled
 crates to try: `examples/increment --function increment`,
 `examples/stepper --function sum_triples`, `examples/greeter --function store`

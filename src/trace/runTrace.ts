@@ -16,6 +16,7 @@
 import { ResolvedTrace } from '../debugAdapter/types';
 import { buildStopModel } from '../debugAdapter/stopModel';
 import { MemoryImage } from '../debugAdapter/MemoryImage';
+import { LedgerImage } from '../debugAdapter/LedgerImage';
 import { ProjectOpts, projectSourceStop } from './projectStop';
 
 /** Options for the one-shot CLI trace projection. */
@@ -42,11 +43,14 @@ export function runCliTrace(resolved: ResolvedTrace, opts?: CliTraceOpts): strin
   }
 
   const memory = new MemoryImage(resolved.model.records);
+  // Built once for the whole run, not per stop: construction is a full scan.
+  const ledger = new LedgerImage(resolved.model.records);
   const projectOpts: ProjectOpts = {
     maxDepth: opts?.maxDepth,
     maxChildren: opts?.maxChildren,
     maxNodes: opts?.maxNodes,
     memory,
+    ledger,
   };
 
   const lines: string[] = [
@@ -57,13 +61,24 @@ export function runCliTrace(resolved: ResolvedTrace, opts?: CliTraceOpts): strin
       records: resolved.model.records.length,
       stops: stopModel.runStarts.length,
       hasDwarf: resolved.variables.hasVariables(),
+      // Whether the stop records below carry `globals` / `ledger` at all, so a
+      // consumer can branch without probing every stop (G4, L14).
+      hasGlobals: resolved.model.records.some((r) => r.globals !== undefined),
+      hasLedger: ledger.hasLedger(),
     }),
   ];
 
+  // Each stop's `changed` flags are relative to the PREVIOUS stop, so the JSONL
+  // alone shows where the ledger moved as execution advanced.
+  let previousIndex: number | undefined;
   for (const index of stopModel.runStarts) {
     lines.push(
-      JSON.stringify({ kind: 'stop', ...projectSourceStop(resolved, stopModel, index, projectOpts) }),
+      JSON.stringify({
+        kind: 'stop',
+        ...projectSourceStop(resolved, stopModel, index, { ...projectOpts, previousIndex }),
+      }),
     );
+    previousIndex = index;
   }
 
   lines.push(

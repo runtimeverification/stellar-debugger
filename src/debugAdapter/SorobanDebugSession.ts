@@ -32,6 +32,9 @@ import { ResolvedTrace, SessionBackend, SorobanLaunchArgs } from './types';
 import { TypedValue } from '../komet/trace';
 import { renderInstr } from '../komet/mnemonics';
 import { MemoryImage } from './MemoryImage';
+import { LedgerImage, LedgerStorageEntry, LedgerCallFrame } from './LedgerImage';
+import { renderScVal, renderAddress, summarizeScVal } from '../soroban/scvalJson';
+import { Durability } from '../komet/trace';
 import { makeRuntimeState } from './runtimeState';
 import { DecodedValue, ChildVar } from '../dwarf/ValueDecoder';
 import { ScopeVar } from '../dwarf/ScopeIndex';
@@ -39,11 +42,15 @@ import { ScopeVar } from '../dwarf/ScopeIndex';
 const THREAD_ID = 1;
 const FRAME_ID = 1;
 
-/** Variable-reference handles for the two scopes we expose. */
+/** Variable-reference handles for the fixed scopes we expose. */
 enum ScopeRef {
   Locals = 1,
   Stack = 2,
   SourceVars = 3,
+  /** WASM globals of the executing module (docs/state-inspection.md, G2). */
+  Globals = 4,
+  /** Stellar ledger state at the cursor (docs/state-inspection.md, L1–L15). */
+  Ledger = 5,
 }
 
 export class SorobanDebugSession extends DebugSession {
@@ -102,6 +109,8 @@ export class SorobanDebugSession extends DebugSession {
   private variables: VariableResolver = new NullVariableResolver();
   /** Folded linear-memory view for decoding memory-backed source variables. */
   private memoryImage?: MemoryImage;
+  /** Per-cursor Stellar ledger reconstruction (docs/state-inspection.md). */
+  private ledgerImage?: LedgerImage;
   /**
    * Handles for lazily-expanded source-variable children. High start avoids
    * colliding with the fixed ScopeRef range; reset on every stop so refs are
@@ -170,6 +179,7 @@ export class SorobanDebugSession extends DebugSession {
       this.source = resolved.source;
       this.variables = resolved.variables;
       this.memoryImage = new MemoryImage(this.model.records);
+      this.ledgerImage = new LedgerImage(this.model.records);
       this.disassembly = resolved.disassembly;
       this.positions = resolved.positions;
       const stopModel = buildStopModel(resolved, { justMyCode: args.justMyCode });
@@ -452,6 +462,15 @@ export class SorobanDebugSession extends DebugSession {
     if (this.variables.hasVariables()) {
       scopes.unshift(new Scope('Variables', ScopeRef.SourceVars, false));
     }
+    // G4: globals appear only for a trace whose records carry them.
+    if (this.model?.current.globals !== undefined) {
+      scopes.push(new Scope('Globals', ScopeRef.Globals, false));
+    }
+    // L14: the ledger appears only for a trace carrying ledger information —
+    // never as an empty tree.
+    if (this.ledgerImage?.hasLedger()) {
+      scopes.push(new Scope('Ledger', ScopeRef.Ledger, false));
+    }
     response.body = { scopes };
     this.sendResponse(response);
   }
@@ -481,6 +500,12 @@ export class SorobanDebugSession extends DebugSession {
       return;
     }
 
+    if (args.variablesReference === ScopeRef.Ledger) {
+      response.body = { variables: this.ledgerScopeVariables() };
+      this.sendResponse(response);
+      return;
+    }
+
     const childThunk = this.sourceVarChildren.get(args.variablesReference);
     if (childThunk) {
       // A lazily-expanded source-variable container handed out via toDapVariable.
@@ -505,6 +530,12 @@ export class SorobanDebugSession extends DebugSession {
         // Show top-of-stack first.
         for (let i = rec.stack.length - 1; i >= 0; i--) {
           variables.push(this.makeVariable(`[${rec.stack.length - 1 - i}]`, rec.stack[i]));
+        }
+      } else if (args.variablesReference === ScopeRef.Globals) {
+        // G1: the keys are module-relative global indices, so they are shown as
+        // such — the same index space DWARF's global locations refer to.
+        for (const [index, tv] of Object.entries(rec.globals ?? {})) {
+          variables.push(this.makeVariable(`global[${index}]`, tv));
         }
       } else {
         // Nested container previously handed out via a handle.
@@ -756,6 +787,135 @@ export class SorobanDebugSession extends DebugSession {
     );
   }
 
+  /**
+   * The six top-level nodes of the Ledger scope (docs/state-inspection.md,
+   * Presentation). Each is a container whose children are resolved lazily
+   * through the same handle mechanism the source-variable tree uses, so nothing
+   * below a collapsed node is built and every ref dies with the current stop.
+   *
+   * Nodes with nothing to show still appear (as an empty container) so the tree
+   * shape is stable across steps — except when the whole trace carries no ledger
+   * information, in which case the scope itself is absent (L14).
+   */
+  private ledgerScopeVariables(): DebugProtocol.Variable[] {
+    const ledger = this.ledgerImage;
+    const cursor = this.model?.cursor ?? 0;
+    if (!ledger) {
+      return [];
+    }
+
+    const contract = ledger.executingContractAt(cursor);
+    const contractMeta = ledger
+      .contractsAt(cursor)
+      .find((c) => c.contract === contract);
+    const storage = ledger.storageAt(cursor, contract);
+    const accounts = ledger.accountsAt(cursor);
+    const info = ledger.ledgerInfoAt(cursor);
+    const hostObjects = ledger.hostObjectsAt(cursor);
+    const frames = ledger.callStackAt(cursor);
+
+    // Storage groups by durability, keeping only the durabilities in play so the
+    // tree does not show three empty folders for a contract using one.
+    const byDurability = new Map<Durability, LedgerStorageEntry[]>();
+    for (const entry of storage) {
+      const group = byDurability.get(entry.durability);
+      if (group) {
+        group.push(entry);
+      } else {
+        byDurability.set(entry.durability, [entry]);
+      }
+    }
+
+    return [
+      this.container(
+        'Contract',
+        contract === undefined ? 'unavailable' : renderAddress({ addrType: 'contract', value: contract }),
+        () => {
+          const children: ChildVar[] = [];
+          if (contract !== undefined) {
+            children.push({
+              name: 'id',
+              value: { display: renderAddress({ addrType: 'contract', value: contract }) },
+            });
+          }
+          if (contractMeta) {
+            children.push({ name: 'wasmHash', value: { display: contractMeta.wasmHash } });
+            children.push({ name: 'liveUntil', value: { display: String(contractMeta.liveUntil) } });
+          }
+          return children;
+        },
+      ),
+      this.container('Storage', `${storage.length} entr${storage.length === 1 ? 'y' : 'ies'}`, () =>
+        [...byDurability.entries()].map(([durability, entries]) => ({
+          name: durability,
+          value: {
+            display: `${entries.length}`,
+            children: () => entries.map((entry) => this.storageChild(entry)),
+          },
+        })),
+      ),
+      this.container('Accounts', `${accounts.length}`, () =>
+        accounts.map((account) => ({
+          name: renderAddress({ addrType: 'account', value: account.account }),
+          value: { display: String(account.balance), typeName: 'stroops' },
+        })),
+      ),
+      this.container(
+        'Ledger',
+        info === undefined ? 'unavailable' : `#${info.sequence}`,
+        () =>
+          info === undefined
+            ? []
+            : [
+                { name: 'sequence', value: { display: String(info.sequence) } },
+                { name: 'timestamp', value: { display: formatTimestamp(info.timestamp) } },
+              ],
+      ),
+      this.container('Host objects', `${hostObjects.length}`, () =>
+        hostObjects.map((object) => ({
+          name: `[${object.index}]`,
+          value: renderScVal(object.value),
+        })),
+      ),
+      this.container('Call stack', `${frames.length}`, () =>
+        frames.map((frame) => ({ name: `[${frame.depth}]`, value: callFrameValue(frame) })),
+      ),
+    ];
+  }
+
+  /** A named, always-expandable Ledger node with a lazily built child list. */
+  private container(
+    name: string,
+    summary: string,
+    children: () => ChildVar[],
+  ): DebugProtocol.Variable {
+    return {
+      name,
+      value: summary,
+      variablesReference: this.sourceVarChildren.create(children),
+    };
+  }
+
+  /**
+   * One storage entry: named by its key, valued by its value, and expandable to
+   * the value's own structure plus the entry's TTL.
+   */
+  private storageChild(entry: LedgerStorageEntry): ChildVar {
+    const value = renderScVal(entry.value);
+    const nested = value.children;
+    return {
+      name: summarizeScVal(entry.key),
+      value: {
+        display: value.display,
+        typeName: value.typeName,
+        children: () => [
+          ...(nested ? nested() : []),
+          { name: 'liveUntil', value: { display: String(entry.liveUntil) } },
+        ],
+      },
+    };
+  }
+
   private makeVariable(name: string, tv: TypedValue): DebugProtocol.Variable {
     const [type, value] = tv;
     return {
@@ -818,6 +978,42 @@ function paddingAddress(
     return instructions[0].address + index;
   }
   return instructions[instructions.length - 1].address + (index - (instructions.length - 1));
+}
+
+/**
+ * One open contract call, summarized as `to.function(args)` and expandable to
+ * its parts. Addresses render as strkeys, the form that appears in contract
+ * source and CLI output.
+ */
+function callFrameValue(frame: LedgerCallFrame): DecodedValue {
+  const args = frame.args.map((arg) => renderScVal(arg).display).join(', ');
+  return {
+    display: `${renderAddress(frame.to)}.${frame.function}(${args})`,
+    children: () => [
+      { name: 'from', value: { display: renderAddress(frame.from) } },
+      { name: 'to', value: { display: renderAddress(frame.to) } },
+      { name: 'function', value: { display: frame.function } },
+      { name: 'depth', value: { display: String(frame.depth) } },
+      {
+        name: 'args',
+        value: {
+          display: `[${frame.args.length}]`,
+          ...(frame.args.length > 0
+            ? {
+                children: () =>
+                  frame.args.map((arg, i) => ({ name: `[${i}]`, value: renderScVal(arg) })),
+              }
+            : {}),
+        },
+      },
+    ],
+  };
+}
+
+/** A ledger close time as both its raw seconds and an ISO instant. */
+function formatTimestamp(timestamp: number): string {
+  const iso = new Date(timestamp * 1000).toISOString();
+  return `${timestamp} (${iso})`;
 }
 
 function formatValue(value: unknown): string {
