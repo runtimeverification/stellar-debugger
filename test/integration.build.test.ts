@@ -36,11 +36,4 @@ const toolchainAvailable = hasTool('stellar') && hasTool('cargo');
     // wasm magic number: 0x00 0x61 0x73 0x6d
     assert.deepStrictEqual([...bytes.subarray(0, 4)], [0x00, 0x61, 0x73, 0x6d]);
   });
-
-  it('returns a prebuilt wasm without building when wasmPath is given', async () => {
-    const prebuilt = path.join(__dirname, '..', '..', 'test', 'fixtures', 'sample_contract.wasm');
-    const builder = new ContractBuilder();
-    const result = await builder.build({ contractDir: CRATE, wasmPath: prebuilt }, () => undefined);
-    assert.strictEqual(result, prebuilt);
-  });
 });

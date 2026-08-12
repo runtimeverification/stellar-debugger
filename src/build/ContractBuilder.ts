@@ -21,8 +21,6 @@ export interface BuildOptions {
   contractDir: string;
   /** Build command; defaults to `stellar contract build`. */
   buildCommand?: string;
-  /** Explicit wasm path; if set, skips building and just returns it. */
-  wasmPath?: string;
   /**
    * Build with DWARF debug info (default true): injects
    * CARGO_PROFILE_RELEASE_DEBUG=true, CARGO_PROFILE_RELEASE_STRIP=none, and
@@ -43,12 +41,6 @@ export class ContractBuildError extends Error {
 
 export class ContractBuilder {
   async build(opts: BuildOptions, report: ProgressReporter): Promise<string> {
-    if (opts.wasmPath) {
-      await assertFile(opts.wasmPath, 'wasmPath');
-      report(`Using prebuilt wasm: ${opts.wasmPath}`);
-      return opts.wasmPath;
-    }
-
     const debugInfo = opts.debugInfo !== false;
     const command = opts.buildCommand ?? 'stellar contract build';
     report(`Building contract: ${command} (in ${opts.contractDir})`);
@@ -147,15 +139,4 @@ async function listWasm(dir: string): Promise<{ path: string; mtimeMs: number }[
     }
   }
   return found;
-}
-
-async function assertFile(p: string, label: string): Promise<void> {
-  try {
-    const st = await fs.stat(p);
-    if (!st.isFile()) {
-      throw new Error('not a file');
-    }
-  } catch {
-    throw new ContractBuildError(`${label} does not exist or is not a file: ${p}`);
-  }
 }
