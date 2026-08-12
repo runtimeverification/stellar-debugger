@@ -5,7 +5,7 @@
 > **TL;DR:** The precise contract for how the cursor moves through a recorded
 > trace — statement vs. instruction granularity, forward and backward. Defines
 > the per-record model (visible/mapped/depth/run) and the numbered rules
-> (S1–S20) that the test suite pins, plus the opt-level build prerequisite and
+> (S1–S21) that the test suite pins, plus the opt-level build prerequisite and
 > the fixtures behind each rule.
 
 The contract between the debugger's replay engine and the user's expectations
@@ -13,6 +13,13 @@ when stepping through a recorded trace — at **statement** (Rust source) and
 **instruction** (Disassembly View) granularity, forward and backward. The
 systematic test suite (`test/stepping*.test.ts`, `test/dap.test.ts`) pins these
 rules; every rule ID below is cited by at least one test.
+
+Where the rules live in the code: the per-record model below is derived by
+`src/debugAdapter/stops.ts` and assembled into a `StopModel` by
+`src/debugAdapter/stopModel.ts`; the traversal rules (S1–S15, S20) are
+`src/debugAdapter/replayCursor.ts`, which `SorobanDebugSession` calls once per
+DAP request. Both are pure modules, unit-tested without a DAP client
+(`test/stops.test.ts`, `test/stopModel.test.ts`, `test/replayCursor.test.ts`).
 
 ## Model
 
