@@ -1,7 +1,7 @@
 /**
- * Type-aware value decoder: given a resolved `ValueLocation` (M4), a `DwarfType`
- * (M3), and a snapshot of the WASM runtime, produces a human-readable value plus
- * — lazily — its children for the DAP Variables tree.
+ * Type-aware value decoder: given a resolved `ValueLocation` (dwarf/locexpr), a
+ * `DwarfType` (dwarf/TypeRegistry), and a snapshot of the WASM runtime, produces
+ * a human-readable value plus — lazily — its children for the DAP Variables tree.
  *
  * This is also where **Rust surface types** (`&str`, slices) are recognized by a
  * struct's name and shape; the `TypeRegistry` stays a faithful DWARF model and
@@ -287,24 +287,39 @@ function aggregate(
   base: number,
   ctx: DecodeContext,
 ): DecodedValue {
-  const children = (): ChildVar[] => {
+  const children = cappedChildren(members.length, ctx, (i, childCtx) => ({
+    name: members[i].name ?? '<field>',
+    value: decodeRef(
+      { kind: 'memory', address: base + members[i].offset },
+      members[i].typeRef,
+      childCtx,
+    ),
+  }));
+  return { display, typeName, children };
+}
+
+/**
+ * A lazily built list of `count` children, each produced by `make` at one depth
+ * below `ctx`. At most `budget.maxChildren` are materialized; a cut list ends in
+ * a `…` marker so the UI shows that more exist.
+ */
+function cappedChildren(
+  count: number,
+  ctx: DecodeContext,
+  make: (index: number, childCtx: DecodeContext) => ChildVar,
+): () => ChildVar[] {
+  return () => {
     const cap = ctx.budget.maxChildren;
-    const limit = Math.min(members.length, cap);
     const childCtx: DecodeContext = { ...ctx, depth: ctx.depth + 1 };
     const out: ChildVar[] = [];
-    for (let i = 0; i < limit; i++) {
-      const m = members[i];
-      out.push({
-        name: m.name ?? '<field>',
-        value: decodeRef({ kind: 'memory', address: base + m.offset }, m.typeRef, childCtx),
-      });
+    for (let i = 0; i < Math.min(count, cap); i++) {
+      out.push(make(i, childCtx));
     }
-    if (members.length > cap) {
+    if (count > cap) {
       out.push({ name: '…', value: { display: '…' } });
     }
     return out;
   };
-  return { display, typeName, children };
 }
 
 // --- Arrays ----------------------------------------------------------------
@@ -316,24 +331,11 @@ function decodeArray(type: ArrayType, loc: ValueLocation, ctx: DecodeContext): D
   const base = loc.address;
   const elemSize = byteSizeOf(type.elementRef, ctx);
   const count = type.count ?? 0;
-  const typeName = typeNameOf(type, ctx);
-  const children = (): ChildVar[] => {
-    const cap = ctx.budget.maxChildren;
-    const n = Math.min(count, cap);
-    const childCtx: DecodeContext = { ...ctx, depth: ctx.depth + 1 };
-    const out: ChildVar[] = [];
-    for (let i = 0; i < n; i++) {
-      out.push({
-        name: `[${i}]`,
-        value: decodeRef({ kind: 'memory', address: base + i * elemSize }, type.elementRef, childCtx),
-      });
-    }
-    if (count > cap) {
-      out.push({ name: '…', value: { display: '…' } });
-    }
-    return out;
-  };
-  return { display: `[…; ${count}]`, typeName, children };
+  const children = cappedChildren(count, ctx, (i, childCtx) => ({
+    name: `[${i}]`,
+    value: decodeRef({ kind: 'memory', address: base + i * elemSize }, type.elementRef, childCtx),
+  }));
+  return { display: `[…; ${count}]`, typeName: typeNameOf(type, ctx), children };
 }
 
 // --- Enums -----------------------------------------------------------------
@@ -455,22 +457,10 @@ function decodeSlice(
   if (ptr === undefined) {
     return { display, typeName: type.name };
   }
-  const children = (): ChildVar[] => {
-    const cap = ctx.budget.maxChildren;
-    const n = Math.min(len, cap);
-    const childCtx: DecodeContext = { ...ctx, depth: ctx.depth + 1 };
-    const out: ChildVar[] = [];
-    for (let i = 0; i < n; i++) {
-      out.push({
-        name: `[${i}]`,
-        value: decodeRef({ kind: 'memory', address: ptr + i * elemSize }, elemRef, childCtx),
-      });
-    }
-    if (len > cap) {
-      out.push({ name: '…', value: { display: '…' } });
-    }
-    return out;
-  };
+  const children = cappedChildren(len, ctx, (i, childCtx) => ({
+    name: `[${i}]`,
+    value: decodeRef({ kind: 'memory', address: ptr + i * elemSize }, elemRef, childCtx),
+  }));
   return { display, typeName: type.name, children };
 }
 
