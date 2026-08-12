@@ -30,10 +30,11 @@ komet's tracer emits one record per executed wasm instruction, interleaved with 
 
 Event payloads are **auxiliary**: stepping, breakpoints and source mapping depend only on a record's core fields (`pos`/`instr`/`stack`/`locals`/`mem`), never on an event payload.
 So payload parsing inverts the fail-loudly policy the core fields keep: an unrecognized tag, an event kind the adapter does not model, and a payload that does not validate all yield a record with **no** event payload, and the state views degrade per G4/L14.
+What is modelled is exactly what the views above consume — the events that move the ledger, plus the call boundaries that scope it. A record that moves nothing (a storage read, a host call) carries no event payload and still renders as an ordinary record.
 A komet release that adds or reshapes an event therefore cannot break a debug session.
 
 A record states what it is in its top-level `kind`, and an event's operands are named fields of the record — `operation`/`durability` on a storage write, say. This is komet's format from v0.1.87 on; a record without a `kind` is rejected rather than guessed at, so a trace recorded against an older komet has to be re-recorded.
-A strict parser (`strictParseTraceEvent`) keeps the payload contract pinned by the tests and available to a trace-validation tool, but no session depends on it.
+The payload contract itself is strict — `parseTraceEvent` throws on a malformed modelled payload, and the tests pin it there; the degradation above is `trace.ts` swallowing that error at its single call site.
 A malformed *core* field remains a hard error.
 
 ### Ledger state at a cursor

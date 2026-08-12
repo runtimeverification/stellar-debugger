@@ -139,8 +139,24 @@ describe('parseTraceArgs (M3 CLI devex)', () => {
       assert.ok(msg.includes('Invalid --args-json'), msg);
     });
 
-    it('valid JSON array → run with the invoke step carrying the parsed args', () => {
+    it('valid JSON object → run with the invoke step carrying the named args', () => {
       const p = asRun(
+        parseTraceArgs(['--contract', '.', '--function', 'a', '--args-json', '{"x":1}']),
+      );
+      const launch = p.launch as unknown as { transactions?: unknown[] };
+      const invoke = launch.transactions![1] as { args?: Record<string, unknown> };
+      assert.deepStrictEqual(invoke.args, { x: 1 });
+    });
+
+    it('valid JSON that is not an object (number) → "keyed by parameter name"', () => {
+      const msg = asError(
+        parseTraceArgs(['--contract', '.', '--function', 'a', '--args-json', '5']),
+      );
+      assert.ok(msg.includes('keyed by parameter name'), msg);
+    });
+
+    it('valid JSON that is an array (the removed positional form) → rejected', () => {
+      const msg = asError(
         parseTraceArgs([
           '--contract',
           '.',
@@ -150,24 +166,7 @@ describe('parseTraceArgs (M3 CLI devex)', () => {
           '[{"value":1,"type":"u32"}]',
         ]),
       );
-      const launch = p.launch as unknown as { transactions?: unknown[] };
-      const invoke = launch.transactions![1] as { args?: unknown[] };
-      assert.ok(invoke.args, 'the invoke step should carry args');
-      assert.strictEqual(invoke.args!.length, 1);
-    });
-
-    it('valid JSON that is not an array (number) → "expected a JSON array"', () => {
-      const msg = asError(
-        parseTraceArgs(['--contract', '.', '--function', 'a', '--args-json', '5']),
-      );
-      assert.ok(msg.includes('expected a JSON array'), msg);
-    });
-
-    it('valid JSON that is not an array (object) → "expected a JSON array"', () => {
-      const msg = asError(
-        parseTraceArgs(['--contract', '.', '--function', 'a', '--args-json', '{}']),
-      );
-      assert.ok(msg.includes('expected a JSON array'), msg);
+      assert.ok(msg.includes('keyed by parameter name'), msg);
     });
   });
 

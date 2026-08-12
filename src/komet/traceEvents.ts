@@ -10,6 +10,12 @@
  * `TraceEvent`; `komet/trace.ts` hangs the result off `TraceRecord.event` so the
  * existing record fields (and every consumer of them) are untouched.
  *
+ * What is modelled is exactly what the state views consume: the events that MOVE
+ * the ledger, plus the call boundaries that scope it. Records that move nothing
+ * — a storage read, a host call — yield no event, and still parse (and render)
+ * as ordinary records. Modelling one is a local change here plus a consumer that
+ * reads it, so nothing is carried speculatively.
+ *
  * A record is identified by its `kind`, and each event's operands are named
  * fields of the record — `operation`/`durability` on a storage write, say. An
  * instruction record has no event; `kind: "instr"` falls through to `undefined`
@@ -17,17 +23,13 @@
  *
  * Unlike the core record fields, an event payload is **auxiliary**: stepping,
  * breakpoints and source mapping do not depend on it, only the state views do.
- * So this module inverts `trace.ts`'s fail-loudly policy — `parseTraceEvent`
- * never throws. An unknown tag, an event kind this adapter does not model, and
- * a malformed payload all yield `undefined`: the record still parses as an
- * ordinary one and the state views degrade exactly as G4/L14 prescribe. A
- * komet release that adds or reshapes an event can therefore never break a
- * debug session, and partial event records (as the mocks and fixtures in the
- * test suite build) stay acceptable.
- *
- * `strictParseTraceEvent` is the same parser with the validation errors left to
- * propagate. It is what pins the payload contract in the tests, and what a
- * trace-validation tool would call.
+ * So `parseTraceEvent` states the payload contract strictly — a malformed
+ * payload throws `TraceParseError` — and `trace.ts` inverts its own fail-loudly
+ * policy at the single call site, swallowing that error so the record still
+ * parses as an ordinary one and the state views degrade exactly as G4/L14
+ * prescribe. A komet release that adds or reshapes an event can therefore never
+ * break a debug session, and partial event records (as the mocks and fixtures in
+ * the test suite build) stay acceptable.
  *
  * Pure module (no `vscode` / DAP imports).
  */
@@ -129,15 +131,13 @@ export type TraceEvent =
   | { kind: 'endWasm'; success: boolean; depth: number; result: ScValJson | null }
   | {
       kind: 'contractData';
-      /** `put`/`del` mutate; `get`/`has` are reads a producer may not emit. */
-      op: 'put' | 'del' | 'get' | 'has';
+      /** Only the mutating ops are modelled; a read moves nothing (see header). */
+      op: 'put' | 'del';
       durability: Durability;
       contract: TraceAddress;
       key: ScValJson;
       /** Present for `put`. */
       value?: ScValJson;
-      /** Present for `get`/`has` when the producer records the outcome. */
-      result?: ScValJson | null;
     }
   | {
       kind: 'contractTtl';
@@ -153,8 +153,7 @@ export type TraceEvent =
   | { kind: 'deployContract'; contract: TraceAddress; wasmHash: string; liveUntil: number }
   | { kind: 'account'; account: TraceAddress; balance: number }
   | { kind: 'ledgerInfo'; sequence: number; timestamp: number }
-  | { kind: 'addObject'; index: number; value: ScValJson }
-  | { kind: 'hostCall'; module: string; function: string };
+  | { kind: 'addObject'; index: number; value: ScValJson };
 
 /** Deepest `ScVal` nesting validated; below this, structure is taken on trust. */
 const MAX_SCVAL_DEPTH = 64;
@@ -336,36 +335,16 @@ function objectList(obj: Obj, key: string, lineNo: number, tag: string): Obj[] {
 }
 
 /**
- * Parse the event payload of a trace record, tolerating anything unexpected:
- * returns `undefined` for an ordinary instruction record, for an event tag this
- * module does not model, and for a known tag whose payload does not validate.
- * Never throws — see the module header for why an auxiliary payload degrades
- * instead of failing the session.
- */
-export function parseTraceEvent(
-  obj: Record<string, unknown>,
-  kind: string,
-  lineNo: number,
-): TraceEvent | undefined {
-  try {
-    return strictParseTraceEvent(obj, kind, lineNo);
-  } catch (e) {
-    if (e instanceof TraceParseError) {
-      return undefined;
-    }
-    throw e;
-  }
-}
-
-/**
- * The event parser with validation failures left to propagate as
- * `TraceParseError`. This is the pinned payload contract (the tests call it
- * directly); production parsing goes through the tolerant `parseTraceEvent`.
+ * Parse the event payload of a trace record. Returns `undefined` for an ordinary
+ * instruction record and for an event tag this module does not model; THROWS
+ * `TraceParseError` on a modelled tag whose payload does not validate, which is
+ * the pinned payload contract. Production parsing goes through `trace.ts`, which
+ * degrades that error to `undefined` (see the module header).
  *
  * `kind` is the record's already-validated kind; `obj` is the raw record object,
  * which carries the event's own fields.
  */
-export function strictParseTraceEvent(
+export function parseTraceEvent(
   obj: Record<string, unknown>,
   kind: string,
   lineNo: number,
@@ -417,9 +396,9 @@ export function strictParseTraceEvent(
 
     case 'contractData': {
       const op = obj.operation;
-      if (op !== 'put' && op !== 'del' && op !== 'get' && op !== 'has') {
-        // An op this adapter does not model: treat the record as a plain one
-        // rather than throwing, so a producer may add ops freely.
+      if (op !== 'put' && op !== 'del') {
+        // A read (`get`/`has`), or an op a future producer adds: it moves
+        // nothing, so the record parses as a plain one rather than throwing.
         return undefined;
       }
       const args = scValList(obj, 'args', lineNo, kind);
@@ -438,9 +417,6 @@ export function strictParseTraceEvent(
       };
       if (op === 'put') {
         event.value = args[1];
-      }
-      if (obj.result !== undefined) {
-        event.result = obj.result === null ? null : reqScVal(obj, 'result', lineNo, kind);
       }
       return event;
     }
@@ -511,15 +487,6 @@ export function strictParseTraceEvent(
         index: reqInt(obj, 'index', lineNo, kind),
         value: reqScVal(obj, 'value', lineNo, kind),
       };
-
-    case 'hostCall': {
-      const module = obj.module;
-      const fn = obj.function;
-      if (typeof module !== 'string' || typeof fn !== 'string') {
-        fail(lineNo, `${kind} event: 'module' and 'function' must both be strings`);
-      }
-      return { kind: 'hostCall', module, function: fn };
-    }
 
     default:
       return undefined;

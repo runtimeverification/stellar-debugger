@@ -70,8 +70,6 @@ export interface ResolvedTrace {
    * e.g. global initializers). Anchors the client's instruction pointer.
    */
   positions: (number | null)[];
-  /** Optional human-readable invocation return value, for the debug console. */
-  returnValue?: string;
 }
 
 /**

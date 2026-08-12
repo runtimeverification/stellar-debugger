@@ -16,9 +16,9 @@
  * ONLY the root contract's wasm. A sub-call's small `pos` collides with the
  * root's low code offsets and would mis-map to bogus source, so records
  * executing in a contract other than the root are made invisible (position ->
- * null). Which contract a record belongs to is derived from the trace's own
- * call boundaries (komet/executingContract.ts); a trace carrying none leaves
- * the gate inert.
+ * null). Which contract a record belongs to comes from the trace's own call
+ * boundaries, via the model's LedgerImage; a trace carrying none leaves the
+ * gate inert.
  *
  * Missing or unreadable DWARF is NEVER fatal: the session degrades to a
  * NullSourceMapper (wasm-level debugging) with a note in the debug console.
@@ -33,7 +33,6 @@ import { DwarfLineTable } from '../dwarf/LineTable';
 import { DwarfParseError } from '../dwarf/cursor';
 import { WasmFormatError } from '../wasm/sections';
 import { normalizeMnemonic } from '../komet/mnemonics';
-import { executingContracts } from '../komet/executingContract';
 import { SourceMapper } from '../sourcemap/SourceMapper';
 import { DwarfSourceMapper } from '../sourcemap/DwarfSourceMapper';
 import { NullSourceMapper } from '../sourcemap/NullSourceMapper';
@@ -48,10 +47,11 @@ import { DwarfDebugInfo } from '../dwarf/DebugInfo';
  * check alone. Everything else (null pos, mid-instruction offsets, records
  * from other sections' address spaces) maps to null.
  *
- * A cross-contract gate runs first: each record's executing contract is derived
- * from the trace's call boundaries, the root is the first one that resolves to a
- * contract, and any record executing in a DIFFERENT contract validates to null
- * regardless of pos/mnemonic. This is because a sub-call's `pos` collides with
+ * A cross-contract gate runs first: each record's executing contract comes from
+ * the model's ledger reconstruction (the innermost open call at that record),
+ * the root is the first one that resolves to a contract, and any record
+ * executing in a DIFFERENT contract validates to null regardless of
+ * pos/mnemonic. This is because a sub-call's `pos` collides with
  * the root's address space while the disassembly/DWARF here is the root
  * contract's ONLY. A record with no open call (the ledger baseline and anything
  * else ahead of the first `callContract`, or every record of a trace that
@@ -65,11 +65,12 @@ import { DwarfDebugInfo } from '../dwarf/DebugInfo';
  * error, no worse than the pre-gate mis-mapping.
  */
 export function validatedPositions(model: TraceModel, disassembly: Disassembly): (number | null)[] {
-  const contracts = executingContracts(model.records);
-  const root = contracts.find((contract) => contract !== null) ?? null;
+  const ledger = model.ledger;
+  const contracts = model.records.map((_, i) => ledger.executingContractAt(i));
+  const root = contracts.find((contract) => contract !== undefined);
   return model.records.map((rec, i) => {
     const contract = contracts[i];
-    if (root !== null && contract !== null && contract !== root) {
+    if (root !== undefined && contract !== undefined && contract !== root) {
       return null;
     }
     if (rec.pos === null) {

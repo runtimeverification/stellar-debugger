@@ -1,37 +1,25 @@
 /**
  * M2 acceptance tests: spec-driven arg encoding + `${...}` substitution.
  *
- * Pins the "M2 acceptance" section of the spec. Two pure, IO-free concerns
- * (aside from reading the committed wasm fixture off disk — no network, no
- * komet-node):
+ * Two pure, IO-free concerns (aside from reading the committed wasm fixture off
+ * disk — no network, no komet-node):
  *
- *   1. A spec-driven encoder (implementer's home: src/soroban/specEncode.ts):
- *      - `loadContractSpec(wasm)` resolves the contract `Spec` OFFLINE from the
- *        wasm's `contractspecv0` custom section.
- *      - `encodeNamedArgs(spec, fn, namedArgs)` encodes args keyed by the spec's
- *        EXACT param names, handling composites (vecs of tuples of unions).
- *      - `encodeInvokeArgs(spec, fn, args)` dispatches: a legacy `{type,value}[]`
- *        array routes to the existing `src/soroban/scval` encoder; an object
- *        routes to the spec-driven path.
+ *   1. `encodeInvokeArgs(wasm, fn, args)` encodes args keyed by the contract
+ *      spec's EXACT param names, parsing the wasm's `contractspecv0` custom
+ *      section OFFLINE and handling composites (vecs of tuples of unions).
  *   2. A pure `substitute(value, ctx)` pass replacing `${sourceAddress}` and
  *      `${contract:<id>}` inside string values.
  *
  * Uses the REAL committed fixture test/fixtures/composite.wasm (built from
  * test/fixtures/composite-contract/), whose `supply(requests: Vec<(AssetKey,
- * i128)>)` exercises union/tuple/vec encoding. Imports from the not-yet-existing
- * implementer module on purpose (TDD red phase).
+ * i128)>)` exercises union/tuple/vec encoding.
  */
 
 import * as assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import { Keypair, scValToNative, xdr } from '@stellar/stellar-sdk';
-import {
-  loadContractSpec,
-  encodeNamedArgs,
-  encodeInvokeArgs,
-  substitute,
-} from '../src/soroban/specEncode';
+import { encodeInvokeArgs, substitute } from '../src/soroban/specEncode';
 
 // Matches the loader used by the integration tests: compiled tests live in
 // out/test/, so the fixture is two levels up under the source tree.
@@ -42,22 +30,18 @@ const COMPOSITE_WASM = path.join(__dirname, '..', '..', 'test', 'fixtures', 'com
 // (no `Keypair.random()`), with no network access.
 const ADDRESS = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 7)).publicKey();
 
-type Spec = Awaited<ReturnType<typeof loadContractSpec>>;
-
 describe('M2 specEncode', () => {
   let wasm: Buffer;
-  let spec: Spec;
 
-  before(async () => {
+  before(() => {
+    // Read once; every encode below parses its `contractspecv0` section fully
+    // OFFLINE — no RPC call, despite Spec.fromWasm's rpc-shaped signature.
     wasm = fs.readFileSync(COMPOSITE_WASM);
-    // Resolves fully OFFLINE — no RPC call, despite Client.fromWasm's rpc-shaped
-    // signature (the spec is independent of any live contract id).
-    spec = await loadContractSpec(wasm);
   });
 
-  describe('loadContractSpec + encodeNamedArgs (spec-driven)', () => {
-    it('encodes the composite `supply(requests: Vec<(AssetKey,i128)>)` to a top-level scvVec that round-trips to the exact native', () => {
-      const scvals = encodeNamedArgs(spec, 'supply', {
+  describe('spec-driven encoding', () => {
+    it('encodes the composite `supply(requests: Vec<(AssetKey,i128)>)` to a top-level scvVec that round-trips to the exact native', async () => {
+      const scvals = await encodeInvokeArgs(wasm, 'supply', {
         requests: [
           [{ tag: 'Native' }, '1000'],
           [{ tag: 'Other', values: [7] }, '-5'],
@@ -78,8 +62,8 @@ describe('M2 specEncode', () => {
       ]);
     });
 
-    it('encodes a Stellar(Address) union variant', () => {
-      const scvals = encodeNamedArgs(spec, 'supply', {
+    it('encodes a Stellar(Address) union variant', async () => {
+      const scvals = await encodeInvokeArgs(wasm, 'supply', {
         requests: [[{ tag: 'Stellar', values: [ADDRESS] }, '42']],
       });
 
@@ -90,49 +74,35 @@ describe('M2 specEncode', () => {
       assert.deepStrictEqual(native, [[['Stellar', ADDRESS], 42n]]);
     });
 
-    it('throws on a wrong param name', () => {
-      assert.throws(() =>
-        encodeNamedArgs(spec, 'supply', {
-          // The spec's param is `requests`; a wrong name must be rejected
-          // rather than silently dropped.
-          wrongName: [[{ tag: 'Native' }, '1000']],
-        }),
+    it('rejects a wrong param name', async () => {
+      await assert.rejects(
+        // The spec's param is `requests`; a wrong name must be rejected rather
+        // than silently dropped.
+        encodeInvokeArgs(wasm, 'supply', { wrongName: [[{ tag: 'Native' }, '1000']] }),
       );
     });
 
-    it('throws on an unknown function', () => {
-      assert.throws(() => encodeNamedArgs(spec, 'noSuchFunction', {}));
-    });
-  });
-
-  describe('encodeInvokeArgs (dispatcher)', () => {
-    it('routes a legacy `{type,value}[]` array to the legacy encoder', () => {
-      const scvals = encodeInvokeArgs(spec, 'supply', [{ value: 5, type: 'u32' }]);
-      assert.strictEqual(scvals.length, 1);
-      assert.strictEqual(scvals[0].switch().name, 'scvU32');
-      assert.strictEqual(Number(scValToNative(scvals[0])), 5);
+    it('rejects an unknown function', async () => {
+      await assert.rejects(encodeInvokeArgs(wasm, 'noSuchFunction', {}));
     });
 
-    it('routes an object of named args to the spec-driven encoder', () => {
-      const scvals = encodeInvokeArgs(spec, 'supply', {
-        requests: [[{ tag: 'Native' }, '1000']],
-      });
-      assert.strictEqual(scvals.length, 1);
-      assert.strictEqual(scvals[0].switch().name, 'scvVec');
-      assert.deepStrictEqual(scValToNative(scvals[0]), [[['Native'], 1000n]]);
+    it('encodes no arguments at all when the step states none', async () => {
+      assert.deepStrictEqual(await encodeInvokeArgs(wasm, 'supply', undefined), []);
     });
 
-    it('produces xdr.ScVal instances on both paths', () => {
-      const legacy = encodeInvokeArgs(spec, 'supply', [{ value: 1, type: 'u32' }]);
-      const named = encodeInvokeArgs(spec, 'supply', {
+    it('rejects the positional array form, which the spec-driven schema replaced', async () => {
+      await assert.rejects(encodeInvokeArgs(wasm, 'supply', [{ value: 5, type: 'u32' }]), /object/);
+    });
+
+    it('produces xdr.ScVal instances', async () => {
+      const named = await encodeInvokeArgs(wasm, 'supply', {
         requests: [[{ tag: 'Native' }, '1']],
       });
-      assert.ok(legacy[0] instanceof xdr.ScVal);
       assert.ok(named[0] instanceof xdr.ScVal);
     });
   });
 
-  describe('loadContractSpec — event (kind-5) spec entries', () => {
+  describe('event (kind-5) spec entries', () => {
     // Guards parsing of protocol-23 `SC_SPEC_ENTRY_EVENT_V0` (kind 5) spec
     // entries. The pre-14 `@stellar/stellar-sdk` rejected any wasm whose
     // `contractspecv0` section held one with:
@@ -146,11 +116,10 @@ describe('M2 specEncode', () => {
       'base64',
     );
 
-    it('parses a spec containing a kind-5 event entry without throwing and exposes the function', async () => {
-      const eventSpec = await loadContractSpec(EVENT_SPEC_WASM);
-      assert.ok(
-        eventSpec.funcs().map((f) => f.name().toString()).includes('noop'),
-      );
+    it('parses a spec containing a kind-5 event entry without throwing', async () => {
+      // `noop` takes no args, so a successful encode proves the whole spec —
+      // event entry included — parsed.
+      assert.deepStrictEqual(await encodeInvokeArgs(EVENT_SPEC_WASM, 'noop', {}), []);
     });
   });
 

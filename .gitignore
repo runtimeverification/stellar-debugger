@@ -12,3 +12,5 @@ state.kore
 test/fixtures/sample-contract/target/
 test/fixtures/*/target/
 examples/*/target/
+# Fixture crates are built by hand only, to regenerate the committed .wasm.
+test/fixtures/*/Cargo.lock

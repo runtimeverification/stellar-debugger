@@ -15,7 +15,7 @@ import * as assert from 'assert';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import { toTraceRecord, parseTraceJsonl, TraceParseError, TraceEvent } from '../src/komet/trace';
-import { executingContracts } from '../src/komet/executingContract';
+import { LedgerImage } from '../src/debugAdapter/LedgerImage';
 
 const FIXTURES = path.join(__dirname, '..', '..', 'test', 'fixtures');
 /**
@@ -64,7 +64,11 @@ describe('trace parsing — the record contract', () => {
     // A single contract runs the whole trace, so the callee tags every record
     // from its own call frame onward; the ledger baseline precedes any call.
     const callee = expectKind(records[1].event, 'callContract').to.value;
-    assert.deepStrictEqual(executingContracts(records), [null, ...Array(7).fill(callee)]);
+    const ledger = new LedgerImage(records);
+    assert.deepStrictEqual(
+      records.map((_, i) => ledger.executingContractAt(i) ?? null),
+      [null, ...Array(7).fill(callee)],
+    );
   });
 
   it('parses an instruction record, which keeps pos/instr alongside its kind', () => {
@@ -101,11 +105,10 @@ describe('trace parsing — the record contract', () => {
     assert.strictEqual(event.durability, 'temporary');
   });
 
-  it('reads a host call\'s module and function from its named fields', () => {
+  it('names a host call in `instr` while modelling no event for it', () => {
     const rec = toTraceRecord({ kind: 'hostCall', module: 'l', function: '_', locals: {} }, 1);
-    const event = expectKind(rec.event, 'hostCall');
-    assert.strictEqual(event.module, 'l');
-    assert.strictEqual(event.function, '_');
+    assert.deepStrictEqual(rec.instr, ['hostCall']);
+    assert.strictEqual(rec.event, undefined);
   });
 
   it('carries a kind it does not model through as a plain record', () => {

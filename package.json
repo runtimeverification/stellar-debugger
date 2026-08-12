@@ -105,7 +105,7 @@
                       "description": "invoke only: name of the contract function to call."
                     },
                     "args": {
-                      "markdownDescription": "`invoke` only: arguments. Either an object keyed by the function's parameter names (composites, enums `{ \"tag\": ... }`, tuples/vecs as arrays, `i128` as a decimal string, addresses as `G…`/`C…` strings), or the positional form `[{ \"type\", \"value\" }]`. The tokens `${sourceAddress}` and `${contract:<id>}` are expanded inside string values."
+                      "markdownDescription": "`invoke` only: arguments, as an object keyed by the function's parameter names (composites, enums `{ \"tag\": ... }`, tuples/vecs as arrays, `i128` as a decimal string, addresses as `G…`/`C…` strings). Values are encoded against the contract's own spec. The tokens `${sourceAddress}` and `${contract:<id>}` are expanded inside string values."
                     }
                   }
                 }

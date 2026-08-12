@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import { toTraceRecord, parseTraceJsonl, TraceParseError, TraceEvent } from '../src/komet/trace';
-import { strictParseTraceEvent } from '../src/komet/traceEvents';
+import { parseTraceEvent } from '../src/komet/traceEvents';
 
 /**
  * Run the STRICT parser over a raw record object the way `toTraceRecord` would,
@@ -10,7 +10,7 @@ import { strictParseTraceEvent } from '../src/komet/traceEvents';
  * "tolerance" block at the bottom).
  */
 function strict(obj: Record<string, unknown>, lineNo = 1): TraceEvent | undefined {
-  return strictParseTraceEvent(obj, obj.kind as string, lineNo);
+  return parseTraceEvent(obj, obj.kind as string, lineNo);
 }
 
 const FIXTURES = path.join(__dirname, '..', '..', 'test', 'fixtures');
@@ -217,7 +217,7 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
     assert.strictEqual(rec.event, undefined);
   });
 
-  it('parses read ops when a producer emits them', () => {
+  it('models no event for a read op, which moves nothing', () => {
     const rec = toTraceRecord(
       {
         kind: 'contractData', operation: 'get', durability: 'persistent',
@@ -227,10 +227,9 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
       },
       1,
     );
-    const event = expectKind(rec.event, 'contractData');
-    assert.strictEqual(event.op, 'get');
-    assert.strictEqual(event.value, undefined);
-    assert.deepStrictEqual(event.result, { type: 'u32', value: 9 });
+    // The record itself still parses; only its payload is left unmodelled.
+    assert.deepStrictEqual(rec.instr, ['contractData']);
+    assert.strictEqual(rec.event, undefined);
   });
 
   // ---------------------------------------------------------------- ledger baseline
@@ -341,7 +340,7 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
     assert.strictEqual(expectKind(info.event, 'ledgerInfo').sequence, 9);
   });
 
-  // ---------------------------------------------------------------- addObject / hostCall
+  // ---------------------------------------------------------------- addObject
 
   it('parses an addObject event (L11)', () => {
     const rec = toTraceRecord(
@@ -353,15 +352,14 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
     assert.deepStrictEqual(event.value, { type: 'u32', value: 8 });
   });
 
-  it('parses a hostCall event, whose tag carries module and function', () => {
+  it('models no event for a host call, which moves no ledger state', () => {
     const rec = toTraceRecord(
       { kind: 'hostCall', module: 'l', function: '_', locals: { '0': ['i64', 253576579652878] } },
       1,
     );
-    const event = expectKind(rec.event, 'hostCall');
-    assert.strictEqual(event.module, 'l');
-    assert.strictEqual(event.function, '_');
-    // The locals of the host call are still available through the record itself.
+    assert.strictEqual(rec.event, undefined);
+    // The record still names itself and keeps its locals.
+    assert.deepStrictEqual(rec.instr, ['hostCall']);
     assert.deepStrictEqual(rec.locals['0'], ['i64', 253576579652878]);
   });
 
@@ -451,7 +449,6 @@ describe('trace parsing — Soroban VM event payloads (docs/state-inspection.md)
     assert.ok(kinds.has('callContract'), 'fixture should carry callContract');
     assert.ok(kinds.has('endWasm'), 'fixture should carry endWasm');
     assert.ok(kinds.has('contractData'), 'fixture should carry contractData');
-    assert.ok(kinds.has('hostCall'), 'fixture should carry hostCall');
 
     // The fixture's write is an instance-storage put of COUNTER = 5.
     const put = events.find((e) => e.kind === 'contractData');

@@ -1,7 +1,7 @@
 /**
  * The generalized sequence runner: execute a canonical `{ steps, trace }`
- * (produced by M1 `normalizeConfig`) as an ordered sequence of transactions
- * against one accumulating komet-node ledger, then resolve the traced tx into a
+ * (produced by `normalizeConfig`) as an ordered sequence of transactions against
+ * one accumulating komet-node ledger, then resolve the traced tx into a
  * replayable `ResolvedTrace`.
  *
  * This generalizes the fixed 4-step `TurnkeyPipeline` into an arbitrary
@@ -9,16 +9,16 @@
  *
  *   seed source (CreateAccount) ->
  *   per deploy: load wasm -> strip debug sections -> upload -> create contract
- *               (registers handle id -> contractId AND id -> wasm) ->
- *   per invoke: resolve handle -> Spec -> substitute(args) -> encode -> invoke ->
+ *               (registering the handle id) ->
+ *   per invoke: resolve handle -> substitute(args) -> spec-encode -> invoke ->
  *   fetch the TRACED step's trace by hash -> toTraceRecords -> TraceModel ->
  *   buildDebugArtifacts -> ResolvedTrace.
  *
  * Two behaviors this runner guarantees over the old pipeline (spec blockers):
- *   1. It NEVER throws on a FAILED tx. Every step runs; each `{hash, status}`
- *      is recorded, and the traced step's trace is fetched regardless of its
- *      status — a reverting tx stays debuggable.
- *   2. It assigns a DISTINCT, incrementing account sequence per submitted tx so
+ *   1. It NEVER throws on a FAILED tx. Every step runs, each tx's status is
+ *      reported to the debug console, and the traced step's trace is fetched
+ *      regardless of its status — a reverting tx stays debuggable.
+ *   2. Every envelope carries its own account sequence (`SorobanTxBuilder`), so
  *      byte-identical invokes hash differently and komet-node cannot dedup the
  *      second.
  *
@@ -40,7 +40,7 @@ import { toTraceRecords } from '../komet/trace';
 import { TraceModel } from '../debugAdapter/TraceModel';
 import { buildDebugArtifacts } from '../debugAdapter/artifacts';
 import { ProgressReporter, ResolvedTrace } from '../debugAdapter/types';
-import { loadContractSpec, encodeInvokeArgs, substitute, Spec } from '../soroban/specEncode';
+import { encodeInvokeArgs, substitute } from '../soroban/specEncode';
 import { DeployStep, InvokeStep, NormalizedConfig } from './config';
 
 /** Options controlling how the sequence is run. */
@@ -49,10 +49,29 @@ export interface RunOptions {
   sourceSecret?: string;
 }
 
-/** A submitted transaction's hash and final status, recorded per step. */
-export interface SubmittedTx {
+/** A live contract behind a deploy handle. */
+interface Deployed {
+  contractId: string;
+  /** The full (unstripped) wasm: debug artifacts and arg encoding both use it. */
+  wasm: Buffer;
+}
+
+/** A submitted step: the tx whose trace represents it, and its symbol source. */
+interface Submitted {
   hash: string;
-  status: string;
+  wasm: Buffer;
+}
+
+/** The state one run threads through its steps. */
+interface RunContext {
+  txBuilder: SorobanTxBuilder;
+  source: Keypair;
+  sourceAddress: string;
+  /** Live contracts by handle id, filled as deploy steps execute. */
+  deployed: Map<string, Deployed>;
+  /** Submit an envelope, report the status it settles on, and return its hash. */
+  submit: (what: string, envelopeXdr: string) => Promise<string>;
+  report: ProgressReporter;
 }
 
 /**
@@ -82,76 +101,52 @@ export class SequenceRunner {
     const sourceAddress = source.publicKey();
     report(`Source account: ${sourceAddress}`);
 
-    // A distinct, incrementing account sequence per submitted tx keeps every
-    // envelope's hash unique so komet-node cannot dedup identical invokes.
-    let seq = 0;
-    const submit = async (envelopeXdr: string): Promise<SubmittedTx> => {
-      const sent = await this.client.sendTransaction(envelopeXdr);
-      const status = await this.recordStatus(sent.hash);
-      return { hash: sent.hash, status };
+    /**
+     * Submit one envelope and report the status komet-node settled on. A FAILED
+     * (or unreachable) status is REPORTED, never raised: the sequence always
+     * runs to completion so the traced step stays debuggable.
+     */
+    const submit = async (what: string, envelopeXdr: string): Promise<string> => {
+      const { hash } = await this.client.sendTransaction(envelopeXdr);
+      let status: string;
+      try {
+        status = (await this.client.getTransaction(hash)).status;
+      } catch {
+        status = 'UNKNOWN';
+      }
+      report(`${what}: ${status} (tx ${hash})`);
+      return hash;
+    };
+
+    const ctx: RunContext = {
+      txBuilder,
+      source,
+      sourceAddress,
+      deployed: new Map(),
+      submit,
+      report,
     };
 
     // Seed the source account (self-seed; komet boots from empty state).
-    report('Seeding source account (CreateAccount) ...');
-    await submit(txBuilder.buildCreateAccount(source, undefined, seq++));
+    await submit('Seeding source account (CreateAccount)', txBuilder.buildCreateAccount(source));
 
-    // Handle registries, filled as deploys execute.
-    const contracts: Record<string, string> = {};
-    const wasms: Record<string, Buffer> = {};
-    const specs: Record<string, Spec> = {};
-
-    // Per-step: the hash whose trace represents that step, and the wasm that
-    // supplies its debug artifacts. Parallel to `config.steps`.
-    const stepHash: (string | undefined)[] = new Array(config.steps.length);
-    const stepWasm: (Buffer | undefined)[] = new Array(config.steps.length);
-
-    for (let i = 0; i < config.steps.length; i++) {
-      const step = config.steps[i];
-      if (step.kind === 'deploy') {
-        const { contractId, createTxHash, wasm } = await this.runDeploy(
-          step,
-          txBuilder,
-          source,
-          () => seq++,
-          submit,
-          report,
-        );
-        contracts[step.id] = contractId;
-        wasms[step.id] = wasm;
-        stepHash[i] = createTxHash;
-        stepWasm[i] = wasm;
-      } else {
-        const invokeHash = await this.runInvoke(
-          step,
-          txBuilder,
-          source,
-          sourceAddress,
-          contracts,
-          wasms,
-          specs,
-          () => seq++,
-          submit,
-          report,
-        );
-        stepHash[i] = invokeHash;
-        stepWasm[i] = wasms[step.contract];
-      }
+    /** Parallel to `config.steps`: what each step submitted. */
+    const submitted: Submitted[] = [];
+    for (const step of config.steps) {
+      submitted.push(
+        step.kind === 'deploy' ? await this.deploy(step, ctx) : await this.invoke(step, ctx),
+      );
     }
 
     // Fetch the traced step's trace regardless of its status (blocker #1: a
     // reverting tx stays debuggable).
-    const tracedHash = stepHash[config.trace];
-    const tracedWasm = stepWasm[config.trace];
-    if (tracedHash === undefined || tracedWasm === undefined) {
-      throw new Error(`internal error: traced step ${config.trace} produced no submitted transaction`);
-    }
-    report(`Fetching trace for transaction ${tracedHash} ...`);
-    const trace = await this.client.traceTransaction(tracedHash);
+    const traced = submitted[config.trace];
+    report(`Fetching trace for transaction ${traced.hash} ...`);
+    const trace = await this.client.traceTransaction(traced.hash);
 
-    const records = toTraceRecords(trace);
-    const model = new TraceModel(records);
+    const model = new TraceModel(toTraceRecords(trace));
     const { source: sourceMapper, variables, disassembly, positions } = buildDebugArtifacts(
-      tracedWasm,
+      traced.wasm,
       model,
       report,
     );
@@ -159,15 +154,9 @@ export class SequenceRunner {
     return { model, source: sourceMapper, variables, disassembly, positions };
   }
 
-  /** Upload + create a contract; register its id and full wasm bytes. */
-  private async runDeploy(
-    step: DeployStep,
-    txBuilder: SorobanTxBuilder,
-    source: Keypair,
-    nextSeq: () => number,
-    submit: (envelopeXdr: string) => Promise<SubmittedTx>,
-    report: ProgressReporter,
-  ): Promise<{ contractId: string; createTxHash: string; wasm: Buffer }> {
+  /** Upload + create a contract, registering its handle. */
+  private async deploy(step: DeployStep, ctx: RunContext): Promise<Submitted> {
+    const { txBuilder, source, submit, report } = ctx;
     const wasm = await this.loadWasm(step, report);
 
     // komet-node only executes the code; the DWARF custom sections just bloat
@@ -176,62 +165,36 @@ export class SequenceRunner {
     // the full `wasm` used for debug artifacts.
     const uploadWasm = stripDebugSections(wasm);
     report(`Uploading wasm for "${step.id}" (${wasm.length} bytes, ${uploadWasm.length} stripped) ...`);
-    const upload = txBuilder.buildUploadWasm(source, Buffer.from(uploadWasm), nextSeq());
-    await submit(upload.envelopeXdr);
+    const upload = txBuilder.buildUploadWasm(source, Buffer.from(uploadWasm));
+    await submit(`Upload "${step.id}"`, upload.envelopeXdr);
 
     // A deterministic salt (derived from the handle id) keeps the created
     // contract id reproducible across identical runs.
     const salt = createHash('sha256').update(step.id).digest();
-    const create = txBuilder.buildCreateContract(source, upload.wasmHash, salt, nextSeq());
-    report(`Creating contract "${step.id}" -> ${create.contractId} ...`);
-    const created = await submit(create.envelopeXdr);
+    const create = txBuilder.buildCreateContract(source, upload.wasmHash, salt);
+    ctx.deployed.set(step.id, { contractId: create.contractId, wasm });
+    const hash = await submit(`Create "${step.id}" -> ${create.contractId}`, create.envelopeXdr);
 
-    return { contractId: create.contractId, createTxHash: created.hash, wasm };
+    return { hash, wasm };
   }
 
   /** Resolve the handle, encode args (with substitution), and invoke. */
-  private async runInvoke(
-    step: InvokeStep,
-    txBuilder: SorobanTxBuilder,
-    source: Keypair,
-    sourceAddress: string,
-    contracts: Record<string, string>,
-    wasms: Record<string, Buffer>,
-    specs: Record<string, Spec>,
-    nextSeq: () => number,
-    submit: (envelopeXdr: string) => Promise<SubmittedTx>,
-    report: ProgressReporter,
-  ): Promise<string> {
-    const contractId = contracts[step.contract];
-    if (contractId === undefined) {
+  private async invoke(step: InvokeStep, ctx: RunContext): Promise<Submitted> {
+    const { txBuilder, source, sourceAddress, deployed, submit } = ctx;
+    const target = deployed.get(step.contract);
+    if (target === undefined) {
       throw new Error(`invoke references unresolved contract handle "${step.contract}"`);
     }
 
-    let spec = specs[step.contract];
-    if (spec === undefined) {
-      spec = await loadContractSpec(wasms[step.contract]);
-      specs[step.contract] = spec;
-    }
+    const contracts = Object.fromEntries(
+      [...deployed].map(([id, { contractId }]) => [id, contractId]),
+    );
+    const args = substitute(step.args, { sourceAddress, contracts });
+    const scvals = await encodeInvokeArgs(target.wasm, step.function, args);
+    const envelope = txBuilder.buildInvoke(source, target.contractId, step.function, scvals);
+    const hash = await submit(`Invoke ${step.function} on "${step.contract}"`, envelope);
 
-    const substituted = substitute(step.args, { sourceAddress, contracts });
-    const scvals = encodeInvokeArgs(spec, step.function, substituted);
-    report(`Invoking ${step.function} on "${step.contract}" ...`);
-    const envelope = txBuilder.buildInvoke(source, contractId, step.function, scvals, nextSeq());
-    const sent = await submit(envelope);
-    return sent.hash;
-  }
-
-  /**
-   * Fetch a submitted tx's final status. NEVER throws: a FAILED status is
-   * recorded, not raised, so the sequence always runs to completion.
-   */
-  private async recordStatus(hash: string): Promise<string> {
-    try {
-      const result = await this.client.getTransaction(hash);
-      return result.status;
-    } catch {
-      return 'UNKNOWN';
-    }
+    return { hash, wasm: target.wasm };
   }
 
   /** Load a deploy's wasm: a prebuilt `wasm` path, or build a `contract` dir. */

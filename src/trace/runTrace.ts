@@ -15,8 +15,6 @@
 
 import { ResolvedTrace } from '../debugAdapter/types';
 import { buildStopModel } from '../debugAdapter/stopModel';
-import { MemoryImage } from '../debugAdapter/MemoryImage';
-import { LedgerImage } from '../debugAdapter/LedgerImage';
 import { ProjectOpts, projectSourceStop } from './projectStop';
 
 /** Options for the one-shot CLI trace projection. */
@@ -42,15 +40,13 @@ export function runCliTrace(resolved: ResolvedTrace, opts?: CliTraceOpts): strin
     );
   }
 
-  const memory = new MemoryImage(resolved.model.records);
-  // Built once for the whole run, not per stop: construction is a full scan.
-  const ledger = new LedgerImage(resolved.model.records);
+  // Both state images hang off the model, built once on first use and shared by
+  // every stop below.
+  const ledger = resolved.model.ledger;
   const projectOpts: ProjectOpts = {
     maxDepth: opts?.maxDepth,
     maxChildren: opts?.maxChildren,
     maxNodes: opts?.maxNodes,
-    memory,
-    ledger,
   };
 
   const lines: string[] = [
@@ -84,7 +80,9 @@ export function runCliTrace(resolved: ResolvedTrace, opts?: CliTraceOpts): strin
   lines.push(
     JSON.stringify({
       kind: 'result',
-      ...(resolved.returnValue !== undefined ? { returnValue: resolved.returnValue } : {}),
+      ...(resolved.model.returnValue !== undefined
+        ? { returnValue: resolved.model.returnValue }
+        : {}),
       terminated: true,
     }),
   );

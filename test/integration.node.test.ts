@@ -78,10 +78,7 @@ describe('TurnkeyPipeline (real komet-node)', function () {
               kind: 'invoke',
               contract: 'c',
               function: 'add',
-              args: [
-                { value: 5, type: 'u32' },
-                { value: 6, type: 'u32' },
-              ],
+              args: { a: 5, b: 6 },
             },
           ],
           // attach:false -> the pipeline spawns komet-node itself.
@@ -127,7 +124,7 @@ describe('TurnkeyPipeline (real komet-node)', function () {
         {
           transactions: [
             { kind: 'deploy', id: 'c', wasm: INCREMENT_WASM },
-            { kind: 'invoke', contract: 'c', function: 'increment', args: [{ value: 5, type: 'u32' }] },
+            { kind: 'invoke', contract: 'c', function: 'increment', args: { by: 5 } },
           ],
           node: nodeConfig(),
         } as unknown as SorobanLaunchArgs,

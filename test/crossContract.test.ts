@@ -9,13 +9,14 @@
  * they are neither shown nor mis-mapped, while leaving traces that carry no call
  * boundaries untouched.
  *
- * Which contract a record executes in is DERIVED here, from the `callContract`
- * and `endWasm` events the trace already carries — komet-node no longer stamps
- * an `executingContract` field onto each served record. Two things this file
- * pins:
- *   1. src/komet/executingContract.ts — the fold itself, including that a
- *      `callContract` record belongs to the callee it opens and an `endWasm`
- *      record to the callee it closes.
+ * Which contract a record executes in is DERIVED from the `callContract` and
+ * `endWasm` events the trace already carries — komet-node no longer stamps an
+ * `executingContract` field onto each served record — and the derivation lives
+ * in LedgerImage's call-frame stack, the same one the Ledger view reads. Two
+ * things this file pins:
+ *   1. LedgerImage.executingContractAt — the boundary attribution, including
+ *      that a `callContract` record belongs to the callee it opens and an
+ *      `endWasm` record to the callee it closes.
  *   2. src/debugAdapter/artifacts.ts — validatedPositions gates any record whose
  *      derived contract differs from the root's.
  *
@@ -27,11 +28,19 @@
 
 import * as assert from 'assert';
 import { toTraceRecord, TraceRecord } from '../src/komet/trace';
-import { executingContracts } from '../src/komet/executingContract';
 import { validatedPositions } from '../src/debugAdapter/artifacts';
 import { LedgerImage } from '../src/debugAdapter/LedgerImage';
 import { TraceModel } from '../src/debugAdapter/TraceModel';
 import { Disassembly } from '../src/wasm/Disassembly';
+
+/**
+ * The executing contract at each record, as the gate reads it off the trace's
+ * call boundaries: the innermost open call's callee, or null where none is open.
+ */
+function executingContracts(records: TraceRecord[]): (string | null)[] {
+  const image = new LedgerImage(records);
+  return records.map((_, i) => image.executingContractAt(i) ?? null);
+}
 
 // Two distinct 32-byte-ish contract ids (root A, foreign B).
 const A = 'a'.repeat(64);
@@ -74,7 +83,7 @@ function positionsOf(...records: TraceRecord[]): (number | null)[] {
   return validatedPositions(model, Disassembly.fromTrace(model));
 }
 
-describe('executingContracts: derivation from call boundaries', () => {
+describe('executing contract: derivation from call boundaries', () => {
   it('attributes a callContract record to the callee it opens', () => {
     assert.deepStrictEqual(executingContracts([callInto(A), nopAt(10)]), [A, A]);
   });
@@ -116,30 +125,6 @@ describe('executingContracts: derivation from call boundaries', () => {
   it('keeps sibling root-level calls separate', () => {
     const contracts = executingContracts([callInto(A), endCall(), callInto(B), endCall()]);
     assert.deepStrictEqual(contracts, [A, A, B, B]);
-  });
-});
-
-describe('executingContracts: agrees with LedgerImage', () => {
-  // Both answer "which contract is executing here" — this fold per record, and
-  // LedgerImage off its richer call-frame stack for the Ledger view. They must
-  // not drift, so the same trace is put through both, boundary records included.
-  it('matches executingContractAt at every record of a nested trace', () => {
-    const records = [
-      nopAt(null),
-      callInto(A),
-      nopAt(10),
-      callInto(B, 2),
-      nopAt(20),
-      endCall(false, 2),
-      nopAt(30),
-      endCall(true, 1),
-      nopAt(40),
-    ];
-    const derived = executingContracts(records);
-    const image = new LedgerImage(records);
-    for (let i = 0; i < records.length; i++) {
-      assert.strictEqual(derived[i], image.executingContractAt(i) ?? null, `record ${i}`);
-    }
   });
 });
 

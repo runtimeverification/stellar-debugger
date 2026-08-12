@@ -117,8 +117,6 @@ An **`invoke`** step calls a function on a deployed handle:
 
 Two substitution tokens are expanded inside string `args` values: `${sourceAddress}` (the source account's address) and `${contract:<id>}` (the deployed address behind a handle).
 
-`args` also accepts a lower-level positional form — an array `[{ "type": "u32", "value": 1 }, …]`, one entry per parameter — as an alternative to the named object.
-
 Two settings let you point at executables that aren't on your `PATH`: `soroban.stellar.path` and `soroban.kometNode.path`. For the full reference — multi-contract systems, every argument shape, and offline replay — see [`docs/debug-config.md`](docs/debug-config.md).
 
 ### Beyond the editor

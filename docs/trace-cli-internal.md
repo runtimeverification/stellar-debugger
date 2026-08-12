@@ -92,7 +92,7 @@ low-level resolver calls:
 - `source.locationForIndex(index)` → `{path, line, column?}` (or unmapped)
 - `pcAtIndex(resolved.positions, index)` → the PC
 - `variables.functionNameAt(pc)` → function name (**may be `null`** even with DWARF)
-- `makeRuntimeState(record, memoryImage, index)` + `variables.variablesInScope(pc)` +
+- `makeRuntimeState(record, model.memory, index)` + `variables.variablesInScope(pc)` +
   `variables.decodeVariable(v, state, pc)` → decoded variables
 
 Children (`DecodedValue.children`) are expanded **eagerly** into plain arrays, bounded
@@ -141,10 +141,10 @@ interface StopLedger {     // see docs/state-inspection.md for the rules
 `globals` and `ledger` are both **omitted entirely** rather than emitted empty when their
 source data is absent (G4, L14), so `"globals" in stop` is a valid capability probe.
 
-`opts.ledger` lets a caller pass a prebuilt `LedgerImage` — construction is a full scan of
-the records, so `runCliTrace` builds one per run rather than one per stop. `opts.previousIndex`
-turns on the `changed` flags; `runCliTrace` threads each stop's predecessor through it, which
-is why the first stop never carries one.
+The `LedgerImage` and `MemoryImage` both hang off the `TraceModel`, built on first use and
+cached there — construction is a full scan of the records, so every stop of a run shares one
+of each. `opts.previousIndex` turns on the `changed` flags; `runCliTrace` threads each stop's
+predecessor through it, which is why the first stop never carries one.
 
 ## `runCliTrace(resolved, opts): string[]` — `src/trace/runTrace.ts`
 

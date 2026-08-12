@@ -65,6 +65,8 @@ Notes on semantics that shape how you author a sequence:
   account sequence per submission so repeated identical calls each execute.
 - **A reverting transaction stays debuggable.** The sequence never stops on a
   failed transaction; the traced step's trace is fetched regardless of status.
+  Every transaction's status is reported in the debug console as it settles, so
+  a step that failed earlier in the sequence is visible rather than silent.
 
 ### `deploy` step
 
@@ -120,17 +122,6 @@ Composites nest, so a `Vec<(Asset, i128)>` where `Asset` is an enum is:
 ```jsonc
 "args": { "requests": [ [ { "tag": "Native" }, "1000" ],
                         [ { "tag": "Other", "values": ["C…"] }, "-50" ] ] }
-```
-
-### Positional arguments
-
-`args` also accepts the lower-level **positional** form: an array of
-`{ "type", "value" }` objects, one per parameter, encoded without consulting the
-spec. Prefer the named object form above; the positional form is a fallback for
-when you want explicit control over each ScVal's type:
-
-```jsonc
-"args": [ { "type": "u32", "value": 1 }, { "type": "u32", "value": 2 } ]
 ```
 
 ## Substitution tokens

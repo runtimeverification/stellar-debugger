@@ -11,11 +11,17 @@
 import { ResolvedTrace } from '../debugAdapter/types';
 import { StopModel, pcAtIndex } from '../debugAdapter/stopModel';
 import { makeRuntimeState } from '../debugAdapter/runtimeState';
-import { MemoryImage } from '../debugAdapter/MemoryImage';
 import { renderInstr } from '../komet/mnemonics';
 import { DecodedValue } from '../dwarf/ValueDecoder';
 import { LedgerImage } from '../debugAdapter/LedgerImage';
-import { renderScVal, renderAddress, summarizeScVal } from '../soroban/scvalJson';
+import { ledgerSnapshot } from '../debugAdapter/ledgerView';
+import {
+  renderAccount,
+  renderAddress,
+  renderContract,
+  renderScVal,
+  summarizeScVal,
+} from '../soroban/scvalJson';
 import { Durability } from '../komet/trace';
 
 /** A serializable single-stop projection. */
@@ -96,14 +102,11 @@ export interface TraceVar {
   truncated?: boolean;
 }
 
-/** Per-stop expansion budget plus optional pre-built state images. */
+/** Per-stop expansion budget. */
 export interface ProjectOpts {
   maxDepth?: number;
   maxChildren?: number;
   maxNodes?: number;
-  memory?: MemoryImage;
-  /** Reused across a whole run rather than rebuilt per stop. */
-  ledger?: LedgerImage;
   /**
    * The previous stop's trace index. Supplying it turns on the `changed` flag on
    * storage entries that moved since then; without it no entry is flagged.
@@ -202,7 +205,7 @@ export function projectSourceStop(
 
   const variables: TraceVar[] = [];
   if (pc !== null && resolved.variables.hasVariables()) {
-    const memory = opts?.memory ?? new MemoryImage(resolved.model.records);
+    const memory = resolved.model.memory;
     const state = makeRuntimeState(record, memory, index);
     const counter: NodeCounter = { count: 0 };
     for (const v of resolved.variables.variablesInScope(pc)) {
@@ -236,7 +239,7 @@ export function projectSourceStop(
   }
 
   // L14: present only when the trace carries ledger information.
-  const ledger = opts?.ledger ?? new LedgerImage(resolved.model.records);
+  const ledger = resolved.model.ledger;
   if (ledger.hasLedger()) {
     stop.ledger = projectLedger(ledger, index, opts?.previousIndex);
   }
@@ -244,20 +247,25 @@ export function projectSourceStop(
   return stop;
 }
 
-/** Project the ledger at `index`, flagging what moved since `previousIndex`. */
+/**
+ * Flatten the shared ledger snapshot at `index` into the CLI's JSON schema,
+ * flagging the storage entries that moved since `previousIndex`.
+ */
 function projectLedger(
   ledger: LedgerImage,
   index: number,
   previousIndex?: number,
 ): StopLedger {
-  const contract = ledger.executingContractAt(index);
+  const { contract, storage, accounts, info, hostObjects, callStack } = ledgerSnapshot(
+    ledger,
+    index,
+  );
   const changed =
     previousIndex === undefined ? undefined : ledger.changedSince(previousIndex, index);
 
-  const info = ledger.ledgerInfoAt(index);
   const projected: StopLedger = {
-    contract: contract === undefined ? null : renderAddress({ addrType: 'contract', value: contract }),
-    storage: ledger.storageAt(index, contract).map((entry) => {
+    contract: contract === undefined ? null : renderContract(contract),
+    storage: storage.map((entry) => {
       const projectedEntry: StopStorageEntry = {
         durability: entry.durability,
         key: summarizeScVal(entry.key),
@@ -269,14 +277,15 @@ function projectLedger(
       }
       return projectedEntry;
     }),
-    accounts: ledger.accountsAt(index).map((account) => ({
-      account: renderAddress({ addrType: 'account', value: account.account }),
+    accounts: accounts.map((account) => ({
+      account: renderAccount(account.account),
       balance: account.balance,
     })),
-    hostObjects: ledger
-      .hostObjectsAt(index)
-      .map((object) => ({ index: object.index, value: renderScVal(object.value).display })),
-    callStack: ledger.callStackAt(index).map((frame) => ({
+    hostObjects: hostObjects.map((object) => ({
+      index: object.index,
+      value: renderScVal(object.value).display,
+    })),
+    callStack: callStack.map((frame) => ({
       from: renderAddress(frame.from),
       to: renderAddress(frame.to),
       function: frame.function,

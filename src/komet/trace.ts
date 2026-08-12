@@ -223,8 +223,30 @@ export function toTraceRecord(value: unknown, lineNo: number): TraceRecord {
     locals,
     globals,
     mem,
-    event: parseTraceEvent(obj, kind, lineNo),
+    event: eventOf(obj, kind, lineNo),
   };
+}
+
+/**
+ * The record's event payload, or undefined when it has none — including when a
+ * modelled payload fails to validate. An event is auxiliary: stepping and source
+ * mapping never read it, so a malformed one degrades the state views (G4/L14)
+ * instead of failing the whole session, which is the one place this module's
+ * fail-loudly policy is deliberately inverted.
+ */
+function eventOf(
+  obj: Record<string, unknown>,
+  kind: string,
+  lineNo: number,
+): TraceEvent | undefined {
+  try {
+    return parseTraceEvent(obj, kind, lineNo);
+  } catch (e) {
+    if (e instanceof TraceParseError) {
+      return undefined;
+    }
+    throw e;
+  }
 }
 
 /**

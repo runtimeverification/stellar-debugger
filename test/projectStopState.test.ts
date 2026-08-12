@@ -14,11 +14,11 @@ import { projectSourceStop } from '../src/trace/projectStop';
 import { runCliTrace } from '../src/trace/runTrace';
 import { RawTraceBackend } from '../src/debugAdapter/backends/RawTraceBackend';
 import { ResolvedTrace } from '../src/debugAdapter/types';
-import { encodeContract, encodeEd25519PublicKey } from '../src/soroban/strkey';
+import { StrKey } from '@stellar/stellar-sdk';
 
 const FIXTURES = path.join(__dirname, '..', '..', 'test', 'fixtures');
-const CONTRACT_STRKEY = encodeContract(Buffer.from('07'.repeat(32), 'hex'));
-const ACCOUNT_STRKEY = encodeEd25519PublicKey(Buffer.from('08'.repeat(32), 'hex'));
+const CONTRACT_STRKEY = StrKey.encodeContract(Buffer.from('07'.repeat(32), 'hex'));
+const ACCOUNT_STRKEY = StrKey.encodeEd25519PublicKey(Buffer.from('08'.repeat(32), 'hex'));
 
 async function resolve(traceName: string, wasmName?: string): Promise<ResolvedTrace> {
   const args: Record<string, string> = {

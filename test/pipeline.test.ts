@@ -48,10 +48,7 @@ describe('TurnkeyPipeline (against mock komet-node)', () => {
             kind: 'invoke',
             contract: 'c',
             function: 'add',
-            args: [
-              { value: 5, type: 'u32' },
-              { value: 6, type: 'u32' },
-            ],
+            args: { a: 5, b: 6 },
           },
         ],
         node: { attach: true, host: '127.0.0.1', port },
@@ -169,10 +166,7 @@ describe('node.timeoutMs (configurable per-RPC timeout)', () => {
             kind: 'invoke',
             contract: 'c',
             function: 'add',
-            args: [
-              { value: 5, type: 'u32' },
-              { value: 6, type: 'u32' },
-            ],
+            args: { a: 5, b: 6 },
           },
         ],
         node: { attach: true, host: '127.0.0.1', port, timeoutMs },
@@ -235,7 +229,7 @@ describe('TurnkeyPipeline debug-strip + memory-backed variable inspection', () =
       {
         transactions: [
           { kind: 'deploy', id: 'c', wasm: INCR_WASM },
-          { kind: 'invoke', contract: 'c', function: 'increment', args: [{ value: 5, type: 'u32' }] },
+          { kind: 'invoke', contract: 'c', function: 'increment', args: { by: 5 } },
         ],
         node: { attach: true, host: '127.0.0.1', port },
       } as unknown as SorobanLaunchArgs,

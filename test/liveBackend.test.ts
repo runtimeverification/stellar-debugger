@@ -42,10 +42,7 @@ describe('LiveBackend (against mock komet-node)', () => {
             kind: 'invoke',
             contract: 'c',
             function: 'add',
-            args: [
-              { value: 5, type: 'u32' },
-              { value: 6, type: 'u32' },
-            ],
+            args: { a: 5, b: 6 },
           },
         ],
         sourceSecret: FIXED_SECRET,

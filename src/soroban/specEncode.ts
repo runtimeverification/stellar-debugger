@@ -3,18 +3,16 @@
  *
  * A contract's wasm carries a `contractspecv0` custom section describing its
  * function signatures and composite types (structs / enums / unions / tuples /
- * vecs / maps). `@stellar/stellar-sdk`'s `contract.Client.fromWasm` parses that
+ * vecs / maps). `@stellar/stellar-sdk`'s `contract.Spec.fromWasm` parses that
  * section OFFLINE — no RPC call is made despite its rpc-shaped signature — and
- * exposes a `contract.Spec`. `spec.funcArgsToScVals(fn, argsByName)` then
- * encodes named args using the contract's own type defs, so composite inputs no
- * longer need the hand-rolled `{type,value}` encoder in `./scval`.
+ * `spec.funcArgsToScVals(fn, argsByName)` then encodes named args using the
+ * contract's own type defs. So a launch config states arguments the way the
+ * contract declares them, and composites need no hand-rolled encoding at all.
  *
  * This module provides:
- *   - `loadContractSpec(wasm)` — resolve the `Spec` from a wasm buffer, offline.
- *   - `encodeNamedArgs(spec, fn, namedArgs)` — spec-driven encoding by param name.
- *   - `encodeInvokeArgs(spec, fn, args)` — dispatch: a legacy `{type,value}[]`
- *     array routes to `./scval`'s `encodeArgs`; an object routes to the
- *     spec-driven path.
+ *   - `encodeInvokeArgs(wasm, fn, args)` — encode an invoke's args against the
+ *     contract's own spec. The spec is parsed only when there are args to
+ *     encode, so a zero-arg invoke never pays for it.
  *   - `substitute(value, ctx)` — pure recursive `${sourceAddress}` /
  *     `${contract:<id>}` replacement inside string values.
  *
@@ -22,54 +20,29 @@
  */
 
 import { contract, xdr } from '@stellar/stellar-sdk';
-import { encodeArgs, ScValArg } from './scval';
-
-export type Spec = contract.Spec;
 
 /**
- * Resolve a contract `Spec` from its wasm buffer, fully OFFLINE. `Spec.fromWasm`
- * parses the wasm's `contractspecv0` custom section directly — no rpc endpoint
- * and no contract id are involved.
+ * Encode an invoke's `args` for `fn`, keyed by the spec's EXACT parameter names.
+ * A wrong name, a wrong value shape, or an unknown function throws (the SDK
+ * rejects all three). Absent args encode to no arguments at all.
  */
-export async function loadContractSpec(wasm: Buffer): Promise<Spec> {
-  return contract.Spec.fromWasm(wasm);
-}
-
-/**
- * Encode named args for `fn` using the contract's own type defs. Args are keyed
- * by the spec's EXACT parameter names; a wrong name or an unknown function
- * throws (the SDK rejects both).
- */
-export function encodeNamedArgs(
-  spec: Spec,
-  fn: string,
-  namedArgs: Record<string, unknown>,
-): xdr.ScVal[] {
-  return spec.funcArgsToScVals(fn, namedArgs);
-}
-
-/**
- * Dispatch invoke args to the right encoder:
- *   - an ARRAY is the legacy `{type,value}[]` form → `./scval`'s `encodeArgs`;
- *   - an OBJECT is spec-driven named args → `encodeNamedArgs`.
- */
-export function encodeInvokeArgs(
-  spec: Spec,
+export async function encodeInvokeArgs(
+  wasm: Buffer,
   fn: string,
   args: unknown,
-): xdr.ScVal[] {
-  if (Array.isArray(args)) {
-    return encodeArgs(args as ScValArg[]);
-  }
-  if (args !== null && typeof args === 'object') {
-    return encodeNamedArgs(spec, fn, args as Record<string, unknown>);
-  }
-  if (args === undefined) {
+): Promise<xdr.ScVal[]> {
+  if (args === undefined || args === null) {
     return [];
   }
-  throw new Error(
-    `invalid invoke args: expected a { param: value } object or a legacy {type,value}[] array, got ${typeof args}`,
-  );
+  if (typeof args !== 'object' || Array.isArray(args)) {
+    throw new Error(
+      `invalid invoke args for ${fn}: expected an object keyed by parameter name, got ${
+        Array.isArray(args) ? 'an array' : typeof args
+      }`,
+    );
+  }
+  const spec = await contract.Spec.fromWasm(wasm);
+  return spec.funcArgsToScVals(fn, args as Record<string, unknown>);
 }
 
 /** Matches a `${...}` substitution token. */

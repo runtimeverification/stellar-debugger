@@ -2,9 +2,10 @@
  * Minimal Stellar **strkey** encoding — the `G…` / `C…` textual form of a raw
  * 32-byte address (SEP-0023).
  *
- * @stellar/stellar-sdk has `StrKey`, but importing it costs ~6 seconds of module
+ * @stellar/stellar-sdk has `StrKey`, but importing it costs ~8 seconds of module
  * load time, and this runs inside the debug adapter's module graph: pulling the
- * SDK in delayed every session start past the DAP handshake timeout. Encoding is
+ * SDK in delays every session start past the DAP handshake timeout, so the
+ * adapter never starts at all (test/dapLedger.test.ts is the guard). Encoding is
  * a version byte, the payload, and a CRC16-XModem checksum in base32 — small
  * enough to own, in keeping with the adapter's hand-written DWARF and wasm
  * parsers. `test/scvalJson.test.ts` pins the output against the SDK's `StrKey`,

@@ -9,7 +9,6 @@
  */
 
 import { SorobanLaunchArgs } from '../debugAdapter/types';
-import { ScValArg } from '../soroban/scval';
 
 /** The `soroban-trace` help text. */
 export const TRACE_USAGE = `soroban-trace — emit a Rust source-level execution trace as JSONL
@@ -23,7 +22,7 @@ Options:
   --wasm <file>         Contract .wasm supplying DWARF debug info (source + variables).
   --contract <dir>      Crate directory to build and run (live mode).
   --function <name>     Contract function to invoke (required in live mode).
-  --args-json <json>    Function arguments, e.g. '[{"value":1,"type":"u32"}]'.
+  --args-json <json>    Function arguments keyed by parameter name, e.g. '{"a":1,"b":2}'.
   --out <file>          Write JSONL to a file instead of stdout.
   --depth <n>           Max variable-expansion depth (default 3).
   --max-children <n>    Max children materialized per aggregate (default 64).
@@ -33,7 +32,7 @@ Options:
 
 Examples:
   soroban-trace --raw-trace run.jsonl --wasm contract.wasm
-  soroban-trace --contract . --function add --args-json '[{"value":1,"type":"u32"}]'
+  soroban-trace --contract . --function add --args-json '{"a":1,"b":2}'
 `;
 
 /** Outcome of parsing `soroban-trace` argv. */
@@ -134,8 +133,9 @@ export function parseTraceArgs(argv: string[]): TraceParse {
     return err('--function is required in live mode.');
   }
 
-  // --args-json must JSON.parse to an array.
-  let args: ScValArg[] | undefined;
+  // --args-json must JSON.parse to an object keyed by the function's parameter
+  // names; the contract's own spec encodes the values (see soroban/specEncode).
+  let args: Record<string, unknown> | undefined;
   if (argsJson !== undefined) {
     let parsed: unknown;
     try {
@@ -143,10 +143,10 @@ export function parseTraceArgs(argv: string[]): TraceParse {
     } catch (e) {
       return err(`Invalid --args-json: ${e instanceof Error ? e.message : String(e)}`);
     }
-    if (!Array.isArray(parsed)) {
-      return err('Invalid --args-json: expected a JSON array.');
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return err('Invalid --args-json: expected a JSON object keyed by parameter name.');
     }
-    args = parsed as ScValArg[];
+    args = parsed as Record<string, unknown>;
   }
 
   // Numeric options must be non-negative integers.

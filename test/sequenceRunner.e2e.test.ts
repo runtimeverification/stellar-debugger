@@ -280,10 +280,9 @@ describe('M4 SequenceRunner e2e', function () {
 
   // ------------------------------------------------------------------------
   // Scenario 3: no-throw on a FAILED traced step (blocker #1). The last step
-  // deliberately traps — invoking admin_set (arity 1) with zero args, via the
-  // legacy {type,value}[] path so the arity mismatch reaches the node instead
-  // of being rejected during spec encoding. komet returns status FAILED; the
-  // pipeline must NOT throw, and the trap's trace must still come back.
+  // deliberately traps — the fixture's `boom` panics unconditionally — so komet
+  // returns status FAILED; the pipeline must NOT throw, and the trap's trace
+  // must still come back.
   // ------------------------------------------------------------------------
   it('does not throw when the traced last step traps, and still returns its non-empty trace', async () => {
     const resolved = await runSequence({
@@ -299,9 +298,8 @@ describe('M4 SequenceRunner e2e', function () {
           function: '__constructor',
           args: { admin: '${sourceAddress}' },
         },
-        // Deliberate trap: admin_set takes one u32, but we pass zero args (legacy
-        // array form) — the contract dispatcher traps -> tx FAILED on the node.
-        { kind: 'invoke', contract: 'probe', function: 'admin_set', args: [] },
+        // Deliberate trap: `boom` panics unconditionally -> tx FAILED on the node.
+        { kind: 'invoke', contract: 'probe', function: 'boom', args: { _nonce: 1 } },
       ],
       trace: 'last',
     });

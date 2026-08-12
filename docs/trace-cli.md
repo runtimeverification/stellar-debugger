@@ -51,7 +51,7 @@ Options:
   --wasm <file>         Contract .wasm supplying DWARF debug info (source + variables).
   --contract <dir>      Crate directory to build and run (live mode).
   --function <name>     Contract function to invoke (required in live mode).
-  --args-json <json>    Function arguments, e.g. '[{"value":1,"type":"u32"}]'.
+  --args-json <json>    Function arguments keyed by parameter name, e.g. '{"a":1,"b":2}'.
   --out <file>          Write JSONL to a file instead of stdout.
   --depth <n>           Max variable-expansion depth (default 3).
   --max-children <n>    Max children materialized per aggregate (default 64).
@@ -60,7 +60,7 @@ Options:
 
 Examples:
   soroban-trace --raw-trace run.jsonl --wasm contract.wasm
-  soroban-trace --contract . --function add --args-json '[{"value":1,"type":"u32"}]'
+  soroban-trace --contract . --function add --args-json '{"a":1,"b":2}'
 ```
 
 ## Quick start (build → deploy → run → trace)
@@ -72,7 +72,7 @@ of `add(a, b) -> u32` — invoking `add(4, 3)`. Run from the repository root:
 node dist/trace.js \
   --contract  examples/adder \
   --function  add \
-  --args-json '[{"value":4,"type":"u32"},{"value":3,"type":"u32"}]'
+  --args-json '{"a":4,"b":3}'
 ```
 
 This builds the crate with DWARF debug info at opt-level 0, spawns komet-node,
@@ -80,7 +80,7 @@ deploys, invokes `add(4, 3)`, and streams the resulting source-level trace as
 JSONL to stdout:
 
 ```jsonl
-{"kind":"meta","function":"add","args":[{"value":4,"type":"u32"},{"value":3,"type":"u32"}],"records":41,"stops":1,"hasDwarf":true}
+{"kind":"meta","function":"add","records":41,"stops":1,"hasDwarf":true}
 {"kind":"stop","step":0,"traceIndex":29,"depth":0,"pc":"0x2d","function":"invoke_raw_extern","instr":"i32.add","source":{"path":".../examples/adder/src/lib.rs","line":16,"column":9},"variables":[{"name":"arg_0","type":"Val","value":"17179869188"},{"name":"arg_1","type":"Val","value":"12884901892"}]}
 {"kind":"result","terminated":true}
 ```

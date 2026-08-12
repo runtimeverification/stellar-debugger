@@ -16,8 +16,10 @@
  *
  * Pure module (no `vscode` / DAP imports), and deliberately free of
  * @stellar/stellar-sdk: this sits in the debug adapter's module graph, where the
- * SDK's ~6s load time would delay every session start past the DAP handshake
- * timeout. Strkey encoding comes from the local `strkey.ts` instead.
+ * SDK's ~8s load time delays session start past the DAP handshake timeout — the
+ * adapter never starts. (test/dapLedger.test.ts fails outright if the SDK is
+ * reachable from here.) Strkey encoding comes from the local `strkey.ts`
+ * instead.
  */
 
 import { ScValJson, TraceAddress } from '../komet/trace';
@@ -43,6 +45,16 @@ export function renderAddress(address: TraceAddress): string {
     }
   }
   return `0x${hex}`;
+}
+
+/** `C…` strkey of a contract address held as lowercase hex. */
+export function renderContract(hex: string): string {
+  return renderAddress({ addrType: 'contract', value: hex });
+}
+
+/** `G…` strkey of an account address held as lowercase hex. */
+export function renderAccount(hex: string): string {
+  return renderAddress({ addrType: 'account', value: hex });
 }
 
 /** Render an `ScVal` for display, expandable when it is a vec or a map. */

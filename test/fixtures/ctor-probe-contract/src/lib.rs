@@ -10,6 +10,9 @@ const ADMIN: Symbol = symbol_short!("ADMIN");
 /// `nonce` arg lets two calls produce DIFFERENT tx hashes so komet-node does not
 /// dedup the second as a duplicate. Expect false before __constructor, true
 /// after: a clean cross-transaction persistence proof.
+///
+/// `boom(nonce)` always panics, which the host turns into a trapping (FAILED)
+/// transaction — the fixture's way to prove a reverting tx is still traceable.
 #[contract]
 pub struct CtorProbe;
 
@@ -21,5 +24,10 @@ impl CtorProbe {
 
     pub fn admin_set(env: Env, _nonce: u32) -> bool {
         env.storage().instance().has(&ADMIN)
+    }
+
+    pub fn boom(env: Env, _nonce: u32) -> bool {
+        let _ = env;
+        panic!("boom")
     }
 }
