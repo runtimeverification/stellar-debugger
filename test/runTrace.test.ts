@@ -56,8 +56,8 @@ describe('runCliTrace (docs/trace-cli-internal.md, one-shot CLI JSONL)', () => {
       assert.strictEqual(stops.length, sm.runStarts.length);
       assert.strictEqual(stops.length, 1);
 
-      // The last line is the terminated result, with NO returnValue
-      // (RawTraceBackend sets none).
+      // The last line is the terminated result, with NO returnValue (this
+      // fixture predates event records, so it carries no call boundaries).
       const result = JSON.parse(lines[lines.length - 1]);
       assert.strictEqual(result.kind, 'result');
       assert.strictEqual(result.terminated, true);

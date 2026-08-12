@@ -15,7 +15,6 @@
 
 import { ResolvedTrace } from '../debugAdapter/types';
 import { buildStopModel } from '../debugAdapter/stopModel';
-import { MemoryImage } from '../debugAdapter/MemoryImage';
 import { ProjectOpts, projectSourceStop } from './projectStop';
 
 /** Options for the one-shot CLI trace projection. */
@@ -23,6 +22,8 @@ export interface CliTraceOpts extends ProjectOpts {
   function?: string;
   wasm?: string;
   allowNoSource?: boolean;
+  /** Restrict source stops to workspace code (default true, S21). */
+  justMyCode?: boolean;
 }
 
 /**
@@ -30,7 +31,7 @@ export interface CliTraceOpts extends ProjectOpts {
  * no source-level stops unless `opts.allowNoSource` is set.
  */
 export function runCliTrace(resolved: ResolvedTrace, opts?: CliTraceOpts): string[] {
-  const stopModel = buildStopModel(resolved);
+  const stopModel = buildStopModel(resolved, { justMyCode: opts?.justMyCode });
 
   if (stopModel.runStarts.length === 0 && !opts?.allowNoSource) {
     throw new Error(
@@ -39,12 +40,13 @@ export function runCliTrace(resolved: ResolvedTrace, opts?: CliTraceOpts): strin
     );
   }
 
-  const memory = new MemoryImage(resolved.model.records);
+  // Both state images hang off the model, built once on first use and shared by
+  // every stop below.
+  const ledger = resolved.model.ledger;
   const projectOpts: ProjectOpts = {
     maxDepth: opts?.maxDepth,
     maxChildren: opts?.maxChildren,
     maxNodes: opts?.maxNodes,
-    memory,
   };
 
   const lines: string[] = [
@@ -55,19 +57,32 @@ export function runCliTrace(resolved: ResolvedTrace, opts?: CliTraceOpts): strin
       records: resolved.model.records.length,
       stops: stopModel.runStarts.length,
       hasDwarf: resolved.variables.hasVariables(),
+      // Whether the stop records below carry `globals` / `ledger` at all, so a
+      // consumer can branch without probing every stop (G4, L14).
+      hasGlobals: resolved.model.records.some((r) => r.globals !== undefined),
+      hasLedger: ledger.hasLedger(),
     }),
   ];
 
+  // Each stop's `changed` flags are relative to the PREVIOUS stop, so the JSONL
+  // alone shows where the ledger moved as execution advanced.
+  let previousIndex: number | undefined;
   for (const index of stopModel.runStarts) {
     lines.push(
-      JSON.stringify({ kind: 'stop', ...projectSourceStop(resolved, stopModel, index, projectOpts) }),
+      JSON.stringify({
+        kind: 'stop',
+        ...projectSourceStop(resolved, stopModel, index, { ...projectOpts, previousIndex }),
+      }),
     );
+    previousIndex = index;
   }
 
   lines.push(
     JSON.stringify({
       kind: 'result',
-      ...(resolved.returnValue !== undefined ? { returnValue: resolved.returnValue } : {}),
+      ...(resolved.model.returnValue !== undefined
+        ? { returnValue: resolved.model.returnValue }
+        : {}),
       terminated: true,
     }),
   );

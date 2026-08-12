@@ -57,64 +57,74 @@
         ],
         "configurationAttributes": {
           "launch": {
-            "required": [
-              "function"
-            ],
             "properties": {
-              "contract": {
-                "type": "string",
-                "description": "Path to the contract crate directory (containing Cargo.toml). Used to build the wasm.",
-                "default": "${workspaceFolder}"
-              },
-              "wasmPath": {
-                "type": "string",
-                "description": "Path to a prebuilt contract .wasm. Overrides building from `contract`."
-              },
-              "buildCommand": {
-                "type": "string",
-                "description": "Command used to build the contract wasm. Overrides the `soroban.stellar.path` setting. Defaults to `<soroban.stellar.path> contract build`."
-              },
-              "function": {
-                "type": "string",
-                "description": "Name of the contract function to invoke and debug."
-              },
-              "args": {
+              "transactions": {
                 "type": "array",
-                "description": "Arguments to the function, each as { value, type }.",
+                "markdownDescription": "Live mode: an ordered, non-empty sequence of `deploy` / `invoke` steps run against one fresh local ledger. State written by one step is visible to later steps. See [the debug-config reference](https://github.com/runtimeverification/stellar-debugger/blob/main/docs/debug-config.md).",
                 "items": {
                   "type": "object",
                   "required": [
-                    "value",
-                    "type"
+                    "kind"
                   ],
                   "properties": {
-                    "value": {
-                      "description": "The argument value (JSON)."
-                    },
-                    "type": {
+                    "kind": {
                       "type": "string",
-                      "description": "ScVal type.",
                       "enum": [
-                        "bool",
-                        "u32",
-                        "i32",
-                        "u64",
-                        "i64",
-                        "u128",
-                        "i128",
-                        "u256",
-                        "i256",
-                        "symbol",
-                        "string",
-                        "bytes",
-                        "address",
-                        "vec",
-                        "map"
-                      ]
+                        "deploy",
+                        "invoke"
+                      ],
+                      "enumDescriptions": [
+                        "Upload a contract and register a handle id.",
+                        "Call a function on a deployed handle."
+                      ],
+                      "description": "Step kind."
+                    },
+                    "id": {
+                      "type": "string",
+                      "markdownDescription": "`deploy`: handle name that later `invoke` steps reference and that `trace` can select (must be unique). `invoke`: optional label so `trace` can select this transaction."
+                    },
+                    "contract": {
+                      "type": "string",
+                      "markdownDescription": "`deploy`: path to a contract crate directory (containing `Cargo.toml`) to build. `invoke`: handle `id` of an earlier `deploy` step."
+                    },
+                    "wasm": {
+                      "type": "string",
+                      "markdownDescription": "`deploy` only: path to a prebuilt `.wasm`. Overrides building from `contract`."
+                    },
+                    "buildCommand": {
+                      "type": "string",
+                      "markdownDescription": "`deploy` only: command used to build a `contract` directory. Overrides the `soroban.stellar.path` setting. Defaults to `<soroban.stellar.path> contract build`."
+                    },
+                    "debugInfo": {
+                      "type": "boolean",
+                      "markdownDescription": "`deploy` only: build with DWARF debug info for Rust source mapping (default `true`). Set `false` to debug at the wasm level only.",
+                      "default": true
+                    },
+                    "function": {
+                      "type": "string",
+                      "description": "invoke only: name of the contract function to call."
+                    },
+                    "args": {
+                      "markdownDescription": "`invoke` only: arguments, as an object keyed by the function's parameter names (composites, enums `{ \"tag\": ... }`, tuples/vecs as arrays, `i128` as a decimal string, addresses as `G…`/`C…` strings). Values are encoded against the contract's own spec. The tokens `${sourceAddress}` and `${contract:<id>}` are expanded inside string values."
                     }
                   }
-                },
-                "default": []
+                }
+              },
+              "trace": {
+                "type": [
+                  "string",
+                  "number"
+                ],
+                "markdownDescription": "Which transaction feeds the debug session: `\"last\"` (default), a 0-based index into `transactions`, or a step `id` (a deploy's `id` or an invoke's optional `id`).",
+                "default": "last"
+              },
+              "rawTrace": {
+                "type": "string",
+                "description": "Replay mode: path to a precomputed JSONL trace file to replay (skips all RPC and needs no toolchain)."
+              },
+              "wasmPath": {
+                "type": "string",
+                "markdownDescription": "Replay mode only: a `.wasm` supplying disassembly and DWARF source mapping for the replayed `rawTrace`."
               },
               "node": {
                 "type": "object",
@@ -140,6 +150,11 @@
                   "ioDir": {
                     "type": "string",
                     "description": "Directory for komet-node's I/O artifacts (--io-dir). Defaults to a fresh temp dir."
+                  },
+                  "timeoutMs": {
+                    "type": "number",
+                    "markdownDescription": "Per-RPC timeout in milliseconds before a komet-node request is aborted. Defaults to 600000 (10 minutes); raise it for very large contracts that take longer to upload or execute.",
+                    "default": 600000
                   }
                 },
                 "default": {}
@@ -148,14 +163,10 @@
                 "type": "string",
                 "description": "Optional source account secret (S...). If omitted, a fresh account is seeded."
               },
-              "rawTrace": {
-                "type": "string",
-                "description": "Attach mode: path to a precomputed JSONL trace file to replay (skips all RPC)."
-              },
-              "debugInfo": {
+              "justMyCode": {
                 "type": "boolean",
-                "default": true,
-                "description": "Build the contract with DWARF debug info so the debugger can map execution to Rust source files and lines. Set false to build untouched and debug at the wasm level only."
+                "markdownDescription": "Restrict source stepping to files in your workspace (default `true`). When enabled, `stepIn`/`next`/`continue` skip over Rust standard library (`std`/`core`) and crates.io dependency sources, resting only in your own code. Set `false` to also stop in those non-workspace sources.",
+                "default": true
               }
             }
           }
@@ -165,16 +176,20 @@
             "type": "soroban",
             "request": "launch",
             "name": "Soroban: Debug add(1, 2)",
-            "contract": "${workspaceFolder}",
-            "function": "add",
-            "args": [
+            "transactions": [
               {
-                "value": 1,
-                "type": "u32"
+                "kind": "deploy",
+                "id": "contract",
+                "contract": "${workspaceFolder}"
               },
               {
-                "value": 2,
-                "type": "u32"
+                "kind": "invoke",
+                "contract": "contract",
+                "function": "add",
+                "args": {
+                  "a": 1,
+                  "b": 2
+                }
               }
             ]
           }
@@ -187,9 +202,19 @@
               "type": "soroban",
               "request": "launch",
               "name": "Soroban: Debug ${1:function}",
-              "contract": "^\"\\${workspaceFolder}\"",
-              "function": "${1:function}",
-              "args": []
+              "transactions": [
+                {
+                  "kind": "deploy",
+                  "id": "contract",
+                  "contract": "^\"\\${workspaceFolder}\""
+                },
+                {
+                  "kind": "invoke",
+                  "contract": "contract",
+                  "function": "${1:function}",
+                  "args": {}
+                }
+              ]
             }
           }
         ]
@@ -211,7 +236,7 @@
     "mutation": "stryker run"
   },
   "dependencies": {
-    "@stellar/stellar-sdk": "^13.3.0",
+    "@stellar/stellar-sdk": "^14.6.1",
     "@vscode/debugadapter": "^1.68.0",
     "@vscode/debugprotocol": "^1.68.0",
     "wasmparser": "^5.11.1"

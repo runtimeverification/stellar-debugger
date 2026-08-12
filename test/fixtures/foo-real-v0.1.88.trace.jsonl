@@ -1,0 +1,8 @@
+{"kind":"ledger","sequence":3,"timestamp":0,"accounts":[{"account":{"type":"address","addrType":"account","value":"03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8"},"balance":10000000000}],"contracts":[],"codes":[]}
+{"kind":"callContract","from":{"type":"address","addrType":"account","value":"03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8"},"to":{"type":"address","addrType":"contract","value":"6a20fec1a9081773a5f23ce370f925f236346e510438ddd6d40f6b2711c134e0"},"function":"foo","args":[],"depth":1,"storage":[]}
+{"kind":"instr","pos":3,"instr":["const","i32",1048576],"stack":[],"locals":{},"mem":null,"globals":{}}
+{"kind":"instr","pos":11,"instr":["const","i32",1048576],"stack":[],"locals":{},"mem":null,"globals":{"0":["i32",1048576]}}
+{"kind":"instr","pos":19,"instr":["const","i32",1048576],"stack":[],"locals":{},"mem":null,"globals":{"0":["i32",1048576],"1":["i32",1048576]}}
+{"kind":"instr","pos":null,"instr":["block"],"stack":[],"locals":{},"mem":null,"globals":{"0":["i32",1048576],"1":["i32",1048576],"2":["i32",1048576]}}
+{"kind":"instr","pos":3,"instr":["const","i64",2],"stack":[],"locals":{},"mem":null,"globals":{"0":["i32",1048576],"1":["i32",1048576],"2":["i32",1048576]}}
+{"kind":"endWasm","success":true,"depth":1,"result":{"type":"void"}}

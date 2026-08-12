@@ -51,7 +51,7 @@ Options:
   --wasm <file>         Contract .wasm supplying DWARF debug info (source + variables).
   --contract <dir>      Crate directory to build and run (live mode).
   --function <name>     Contract function to invoke (required in live mode).
-  --args-json <json>    Function arguments, e.g. '[{"value":1,"type":"u32"}]'.
+  --args-json <json>    Function arguments keyed by parameter name, e.g. '{"a":1,"b":2}'.
   --out <file>          Write JSONL to a file instead of stdout.
   --depth <n>           Max variable-expansion depth (default 3).
   --max-children <n>    Max children materialized per aggregate (default 64).
@@ -60,7 +60,7 @@ Options:
 
 Examples:
   soroban-trace --raw-trace run.jsonl --wasm contract.wasm
-  soroban-trace --contract . --function add --args-json '[{"value":1,"type":"u32"}]'
+  soroban-trace --contract . --function add --args-json '{"a":1,"b":2}'
 ```
 
 ## Quick start (build → deploy → run → trace)
@@ -72,7 +72,7 @@ of `add(a, b) -> u32` — invoking `add(4, 3)`. Run from the repository root:
 node dist/trace.js \
   --contract  examples/adder \
   --function  add \
-  --args-json '[{"value":4,"type":"u32"},{"value":3,"type":"u32"}]'
+  --args-json '{"a":4,"b":3}'
 ```
 
 This builds the crate with DWARF debug info at opt-level 0, spawns komet-node,
@@ -80,7 +80,7 @@ deploys, invokes `add(4, 3)`, and streams the resulting source-level trace as
 JSONL to stdout:
 
 ```jsonl
-{"kind":"meta","function":"add","args":[{"value":4,"type":"u32"},{"value":3,"type":"u32"}],"records":41,"stops":1,"hasDwarf":true}
+{"kind":"meta","function":"add","records":41,"stops":1,"hasDwarf":true}
 {"kind":"stop","step":0,"traceIndex":29,"depth":0,"pc":"0x2d","function":"invoke_raw_extern","instr":"i32.add","source":{"path":".../examples/adder/src/lib.rs","line":16,"column":9},"variables":[{"name":"arg_0","type":"Val","value":"17179869188"},{"name":"arg_1","type":"Val","value":"12884901892"}]}
 {"kind":"result","terminated":true}
 ```
@@ -90,6 +90,27 @@ Each `stop` carries the source location, the enclosing function, the call
 (aggregates expand into a nested `children` array, bounded by `--depth` /
 `--max-children`). The full `SourceStop` / `TraceVar` field reference is in
 [`trace-cli-internal.md`](./trace-cli-internal.md).
+
+### Machine state: `globals` and `ledger`
+
+When the trace carries them, a `stop` also reports the machine and chain state at that point — the same state the editor's **Globals** and **Ledger** scopes show. `meta` announces both up front (`hasGlobals`, `hasLedger`) so a consumer can branch without probing every stop:
+
+```jsonl
+{"kind":"meta","records":812,"stops":9,"hasDwarf":true,"hasGlobals":true,"hasLedger":true}
+{"kind":"stop","step":3,"traceIndex":214,"pc":"0x2d","instr":"i32.add",
+ "globals":{"0":{"type":"i32","value":"1048560"}},
+ "ledger":{"contract":"CADQO…","storage":[{"durability":"instance","key":"symbol(COUNTER)","value":"5","liveUntil":100,"changed":true}],
+           "accounts":[{"account":"GADQO…","balance":9876543210}],
+           "info":{"sequence":42,"timestamp":1712345678},
+           "hostObjects":[{"index":0,"value":"COUNTER"}],
+           "callStack":[{"from":"GADQO…","to":"CADQO…","function":"increment","depth":1,"args":["5"]}]}}
+```
+
+- `globals` is keyed by **module-relative global index** — the same index space DWARF uses — so it lines up with a variable's location expression.
+- `ledger.storage` covers the executing contract across all three durabilities, each entry with its `liveUntil`. `changed: true` marks entries that moved since the **previous stop**, so a diff of two whole trees is unnecessary; it is absent on the first stop and on entries that did not move.
+- Both keys are omitted entirely for a trace that does not carry them, rather than emitted empty.
+
+Storage is reconstructed from the trace's own contract-call baselines and write events, including undoing the writes of a sub-call that trapped, so the values shown are what the contract would actually read. The rules are specified in [`state-inspection.md`](./state-inspection.md).
 
 Add `--out trace.jsonl` to write to a file instead of stdout. Other bundled
 crates to try: `examples/increment --function increment`,

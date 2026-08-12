@@ -6,11 +6,11 @@ import {
   xdr,
   hash,
   StrKey,
+  nativeToScVal,
   scValToNative,
 } from '@stellar/stellar-sdk';
 import { SorobanTxBuilder } from '../src/soroban/SorobanTxBuilder';
 import { deriveContractId } from '../src/soroban/contractId';
-import { encodeArgs } from '../src/soroban/scval';
 
 const NET = Networks.TESTNET;
 
@@ -52,10 +52,10 @@ describe('SorobanTxBuilder', () => {
   it('builds an invoke envelope calling the named function with args', () => {
     const salt = Buffer.alloc(32, 7);
     const contractId = deriveContractId(source.publicKey(), salt, NET);
-    const xdrStr = builder.buildInvoke(source, contractId, 'add', encodeArgs([
-      { value: 5, type: 'u32' },
-      { value: 6, type: 'u32' },
-    ]));
+    const xdrStr = builder.buildInvoke(source, contractId, 'add', [
+      nativeToScVal(5, { type: 'u32' }),
+      nativeToScVal(6, { type: 'u32' }),
+    ]);
     const tx = TransactionBuilder.fromXDR(xdrStr, NET);
     const op = (tx as any).operations[0];
     assert.strictEqual(op.type, 'invokeHostFunction');

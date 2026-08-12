@@ -19,6 +19,10 @@ export interface MockOptions {
   trace: string;
   /** Override the transaction status reported by getTransaction. */
   traceStatus?: string;
+  /** Delay (ms) before SENDING the JSON-RPC response. */
+  delayMs?: number;
+  /** If set, delay ONLY responses for this method; if unset, delay all. */
+  delayMethod?: string;
 }
 
 export class MockKometNode {
@@ -65,7 +69,15 @@ export class MockKometNode {
         id = msg.id;
         this.received.push({ method: msg.method, params: msg.params ?? {} });
         const result = this.dispatch(msg.method);
-        this.send(res, { jsonrpc: '2.0', id, result });
+        const res_ = { jsonrpc: '2.0', id, result };
+        if (
+          this.opts.delayMs != null &&
+          (this.opts.delayMethod === undefined || this.opts.delayMethod === msg.method)
+        ) {
+          setTimeout(() => this.send(res, res_), this.opts.delayMs);
+        } else {
+          this.send(res, res_);
+        }
       } catch (e) {
         this.send(res, { jsonrpc: '2.0', id, error: { code: -32000, message: (e as Error).message } });
       }

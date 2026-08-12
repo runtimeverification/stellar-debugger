@@ -31,8 +31,8 @@ async function main(): Promise<void> {
   try {
     const resolved = await backend.resolve(launch, (msg) => process.stderr.write(msg + '\n'));
     const lines = runCliTrace(resolved, {
-      function: launch.function,
-      wasm: launch.wasmPath,
+      function: p.function,
+      wasm: p.wasm,
       ...opts,
     });
     const output = lines.join('\n') + '\n';

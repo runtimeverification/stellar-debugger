@@ -125,6 +125,11 @@ describe('SorobanDebugSession memory-backed Rust variables (end-to-end)', () => 
     ]);
     const frame = await topFrame();
     const names = (await dc.scopesRequest({ frameId: frame.id })).body.scopes.map((s) => s.name);
-    assert.deepStrictEqual(names, ['Locals', 'Value Stack']);
+    assert.ok(!names.includes('Variables'), `expected no Variables scope, got: ${names.join(', ')}`);
+    // Kept as an exact list so an accidental scope addition still trips this
+    // guard. `Ledger` belongs here because this fixture's trace carries real
+    // storage events (docs/state-inspection.md, L14); it carries no `globals`,
+    // so there is deliberately no `Globals` scope (G4).
+    assert.deepStrictEqual(names, ['Locals', 'Value Stack', 'Ledger']);
   });
 });

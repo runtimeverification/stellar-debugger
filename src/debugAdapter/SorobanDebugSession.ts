@@ -31,7 +31,7 @@ import { Disassembly } from '../wasm/Disassembly';
 import { ResolvedTrace, SessionBackend, SorobanLaunchArgs } from './types';
 import { TypedValue } from '../komet/trace';
 import { renderInstr } from '../komet/mnemonics';
-import { MemoryImage } from './MemoryImage';
+import { ledgerNodes, ledgerSnapshot } from './ledgerView';
 import { makeRuntimeState } from './runtimeState';
 import { DecodedValue, ChildVar } from '../dwarf/ValueDecoder';
 import { ScopeVar } from '../dwarf/ScopeIndex';
@@ -39,11 +39,15 @@ import { ScopeVar } from '../dwarf/ScopeIndex';
 const THREAD_ID = 1;
 const FRAME_ID = 1;
 
-/** Variable-reference handles for the two scopes we expose. */
+/** Variable-reference handles for the fixed scopes we expose. */
 enum ScopeRef {
   Locals = 1,
   Stack = 2,
   SourceVars = 3,
+  /** WASM globals of the executing module (docs/state-inspection.md, G2). */
+  Globals = 4,
+  /** Stellar ledger state at the cursor (docs/state-inspection.md, L1–L15). */
+  Ledger = 5,
 }
 
 export class SorobanDebugSession extends DebugSession {
@@ -100,8 +104,6 @@ export class SorobanDebugSession extends DebugSession {
   private readonly variableHandles = new Handles<TypedValue[]>();
   /** Source-level variable resolver (Null until a DWARF-bearing wasm loads). */
   private variables: VariableResolver = new NullVariableResolver();
-  /** Folded linear-memory view for decoding memory-backed source variables. */
-  private memoryImage?: MemoryImage;
   /**
    * Handles for lazily-expanded source-variable children. High start avoids
    * colliding with the fixed ScopeRef range; reset on every stop so refs are
@@ -169,10 +171,9 @@ export class SorobanDebugSession extends DebugSession {
       this.model = resolved.model;
       this.source = resolved.source;
       this.variables = resolved.variables;
-      this.memoryImage = new MemoryImage(this.model.records);
       this.disassembly = resolved.disassembly;
       this.positions = resolved.positions;
-      const stopModel = buildStopModel(resolved);
+      const stopModel = buildStopModel(resolved, { justMyCode: args.justMyCode });
       this.validatedPosToIndices = stopModel.validatedPosToIndices;
       this.visibleIndices = stopModel.visibleIndices;
       this.depths = stopModel.depths;
@@ -185,8 +186,9 @@ export class SorobanDebugSession extends DebugSession {
         return;
       }
 
-      if (resolved.returnValue !== undefined) {
-        this.log(`Invocation returned: ${resolved.returnValue}`);
+      const returnValue = this.model.returnValue;
+      if (returnValue !== undefined) {
+        this.log(`Invocation returned: ${returnValue}`);
       }
       this.log(`Loaded trace with ${this.model.length} instructions.`);
 
@@ -201,7 +203,13 @@ export class SorobanDebugSession extends DebugSession {
       this.model.seek(this.firstStopPoint());
       this.sendEvent(new StoppedEvent('entry', THREAD_ID));
     } catch (e) {
-      this.sendErrorResponse(response, 2000, `Failed to start debug session: ${(e as Error).message}`);
+      // sendErrorResponse surfaces only a one-line, non-copyable modal. Mirror
+      // the full error (with stack) into the debug console first, so the details
+      // land in the same copyable log as the rest of the launch output.
+      const message = e instanceof Error ? e.message : String(e);
+      const detail = e instanceof Error ? (e.stack ?? e.message) : String(e);
+      this.log(`Failed to start debug session: ${detail}`);
+      this.sendErrorResponse(response, 2000, `Failed to start debug session: ${message}`);
       this.sendEvent(new TerminatedEvent());
     }
   }
@@ -446,6 +454,15 @@ export class SorobanDebugSession extends DebugSession {
     if (this.variables.hasVariables()) {
       scopes.unshift(new Scope('Variables', ScopeRef.SourceVars, false));
     }
+    // G4: globals appear only for a trace whose records carry them.
+    if (this.model?.current.globals !== undefined) {
+      scopes.push(new Scope('Globals', ScopeRef.Globals, false));
+    }
+    // L14: the ledger appears only for a trace carrying ledger information —
+    // never as an empty tree.
+    if (this.model?.ledger.hasLedger()) {
+      scopes.push(new Scope('Ledger', ScopeRef.Ledger, false));
+    }
     response.body = { scopes };
     this.sendResponse(response);
   }
@@ -460,10 +477,10 @@ export class SorobanDebugSession extends DebugSession {
     if (args.variablesReference === ScopeRef.SourceVars) {
       // Source-level variables: resolve the in-scope DWARF variables at the
       // current PC and decode each against the folded runtime state.
-      if (this.model && this.memoryImage) {
+      if (this.model) {
         const pc = this.currentPc();
         if (pc !== null) {
-          const state = makeRuntimeState(this.model.current, this.memoryImage, this.model.cursor);
+          const state = makeRuntimeState(this.model.current, this.model.memory, this.model.cursor);
           for (const v of this.variables.variablesInScope(pc) as ScopeVar[]) {
             const decoded = this.variables.decodeVariable(v, state, pc);
             variables.push(this.toDapVariable(v.name ?? '<anon>', decoded));
@@ -471,6 +488,12 @@ export class SorobanDebugSession extends DebugSession {
         }
       }
       response.body = { variables };
+      this.sendResponse(response);
+      return;
+    }
+
+    if (args.variablesReference === ScopeRef.Ledger) {
+      response.body = { variables: this.ledgerScopeVariables() };
       this.sendResponse(response);
       return;
     }
@@ -499,6 +522,12 @@ export class SorobanDebugSession extends DebugSession {
         // Show top-of-stack first.
         for (let i = rec.stack.length - 1; i >= 0; i--) {
           variables.push(this.makeVariable(`[${rec.stack.length - 1 - i}]`, rec.stack[i]));
+        }
+      } else if (args.variablesReference === ScopeRef.Globals) {
+        // G1: the keys are module-relative global indices, so they are shown as
+        // such — the same index space DWARF's global locations refer to.
+        for (const [index, tv] of Object.entries(rec.globals ?? {})) {
+          variables.push(this.makeVariable(`global[${index}]`, tv));
         }
       } else {
         // Nested container previously handed out via a handle.
@@ -748,6 +777,20 @@ export class SorobanDebugSession extends DebugSession {
       this.visibleIndices[this.visibleIndices.length - 1] ??
       Math.max(0, (this.model?.length ?? 1) - 1)
     );
+  }
+
+  /**
+   * The top-level nodes of the Ledger scope (docs/state-inspection.md,
+   * Presentation), built by the shared ledger view and handed to the same
+   * `toDapVariable` plumbing as source variables — so nothing below a collapsed
+   * node is built and every ref dies with the current stop.
+   */
+  private ledgerScopeVariables(): DebugProtocol.Variable[] {
+    if (!this.model) {
+      return [];
+    }
+    const snapshot = ledgerSnapshot(this.model.ledger, this.model.cursor);
+    return ledgerNodes(snapshot).map((node) => this.toDapVariable(node.name, node.value));
   }
 
   private makeVariable(name: string, tv: TypedValue): DebugProtocol.Variable {

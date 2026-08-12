@@ -2,9 +2,10 @@
  * Builds the base64 XDR TransactionEnvelopes the turnkey pipeline submits to
  * komet-node: seed account, upload wasm, create contract, and invoke.
  *
- * komet-node ignores sequence numbers, fees, signatures, footprints, and
- * SorobanTransactionData, so there is no simulate/prepare step — we build raw
- * envelopes directly. (Transactions are still signed for forward-compatibility
+ * komet-node ignores fees, signatures, footprints, and SorobanTransactionData,
+ * so there is no simulate/prepare step — we build raw envelopes directly. It
+ * ignores sequence numbers too, but they still distinguish envelopes: see
+ * `sequence` below. (Transactions are still signed for forward-compatibility
  * with real Stellar RPC.)
  *
  * Pure module; depends only on @stellar/stellar-sdk.
@@ -38,11 +39,22 @@ export interface CreateContractResult {
 }
 
 export class SorobanTxBuilder {
+  /**
+   * Account sequence of the NEXT envelope built. komet-node ignores sequence
+   * numbers for EXECUTION, but the sequence is part of the signed envelope, so
+   * two otherwise-identical transactions built with the same sequence hash to
+   * the same bytes and komet-node dedups the second (returns the first's cached
+   * receipt without re-executing). Every envelope this builder produces
+   * therefore gets its own sequence, which is what keeps byte-identical invokes
+   * in one run independently executed.
+   */
+  private sequence = 0;
+
   constructor(private readonly networkPassphrase: string) {}
 
-  /** A fresh TransactionBuilder; sequence is irrelevant to komet-node. */
+  /** A fresh TransactionBuilder at the next unused account sequence. */
   private newBuilder(source: Keypair): TransactionBuilder {
-    const account = new Account(source.publicKey(), '0');
+    const account = new Account(source.publicKey(), String(this.sequence++));
     return new TransactionBuilder(account, {
       fee: BASE_FEE,
       networkPassphrase: this.networkPassphrase,

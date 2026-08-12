@@ -18,6 +18,7 @@ import * as assert from 'assert';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { TurnkeyPipeline } from '../src/pipeline/TurnkeyPipeline';
+import { SorobanLaunchArgs } from '../src/debugAdapter/types';
 import { MemoryImage } from '../src/debugAdapter/MemoryImage';
 import { makeRuntimeState } from '../src/debugAdapter/runtimeState';
 import { evalLocation } from '../src/dwarf/locexpr';
@@ -27,6 +28,13 @@ const WASM = path.join(FIXTURES, 'sample_contract.wasm');
 const INCREMENT_WASM = path.join(FIXTURES, 'increment-debug.wasm');
 const KOMET_NODE_COMMAND = process.env.KOMET_NODE_COMMAND ?? 'komet-node';
 const optedOut = process.env.KOMET_NODE_E2E === '0';
+/**
+ * How long the presence probe below waits. The packaged binary answers `--help`
+ * at once, but one run from source loads pyk and the K bindings first and takes
+ * ~20s, which a tighter bound reports as "not found". Same knob as
+ * sequenceRunner.e2e.test.ts.
+ */
+const PROBE_TIMEOUT_MS = Number(process.env.KOMET_NODE_PROBE_TIMEOUT_MS ?? 30_000);
 
 function nodeConfig() {
   return {
@@ -46,7 +54,10 @@ describe('TurnkeyPipeline (real komet-node)', function () {
     }
     // Fail loudly when the node is missing — a silent skip is exactly how a
     // breaking format change slips through unnoticed.
-    const probe = spawnSync(KOMET_NODE_COMMAND, ['--help'], { stdio: 'ignore', timeout: 10_000 });
+    const probe = spawnSync(KOMET_NODE_COMMAND, ['--help'], {
+      stdio: 'ignore',
+      timeout: PROBE_TIMEOUT_MS,
+    });
     if (probe.error) {
       throw new Error(
         `komet-node not found on PATH (command: '${KOMET_NODE_COMMAND}'). The real-node ` +
@@ -61,15 +72,18 @@ describe('TurnkeyPipeline (real komet-node)', function () {
     try {
       const resolved = await pipeline.run(
         {
-          wasmPath: WASM,
-          function: 'add',
-          args: [
-            { value: 5, type: 'u32' },
-            { value: 6, type: 'u32' },
+          transactions: [
+            { kind: 'deploy', id: 'c', wasm: WASM },
+            {
+              kind: 'invoke',
+              contract: 'c',
+              function: 'add',
+              args: { a: 5, b: 6 },
+            },
           ],
           // attach:false -> the pipeline spawns komet-node itself.
           node: nodeConfig(),
-        },
+        } as unknown as SorobanLaunchArgs,
         (msg) => console.log(msg),
       );
 
@@ -107,7 +121,13 @@ describe('TurnkeyPipeline (real komet-node)', function () {
     const pipeline = new TurnkeyPipeline();
     try {
       const resolved = await pipeline.run(
-        { wasmPath: INCREMENT_WASM, function: 'increment', args: [{ value: 5, type: 'u32' }], node: nodeConfig() },
+        {
+          transactions: [
+            { kind: 'deploy', id: 'c', wasm: INCREMENT_WASM },
+            { kind: 'invoke', contract: 'c', function: 'increment', args: { by: 5 } },
+          ],
+          node: nodeConfig(),
+        } as unknown as SorobanLaunchArgs,
         (msg) => console.log(msg),
       );
       assert.ok(resolved.model.length > 0, 'expected a non-empty trace');

@@ -10,30 +10,22 @@ import { TraceModel } from './TraceModel';
 import { SourceMapper } from '../sourcemap/SourceMapper';
 import { VariableResolver } from '../sourcemap/VariableResolver';
 import { Disassembly } from '../wasm/Disassembly';
-import { ScValArg } from '../soroban/scval';
+import { TxStep, TraceSelector } from '../pipeline/config';
 
 /** Attributes of a `soroban` launch configuration (mirrors package.json). */
 export interface SorobanLaunchArgs extends DebugProtocol.LaunchRequestArguments {
-  /** Path to the contract crate (containing Cargo.toml). */
-  contract?: string;
   /**
-   * Path to a prebuilt .wasm (overrides building from `contract`). Also used
-   * with `rawTrace` for offline symbol-rich replay: the wasm supplies the
-   * disassembly and DWARF source mapping for a canned trace.
+   * The ordered transaction sequence (deploy / invoke steps) to run. Build
+   * options and function/args live on the individual steps.
+   */
+  transactions?: TxStep[];
+  /** Selects which submitted transaction feeds the debug session. */
+  trace?: TraceSelector;
+  /**
+   * REPLAY mode only: the `.wasm` supplying disassembly + DWARF source mapping
+   * for a canned `rawTrace`, enabling offline symbol-rich replay.
    */
   wasmPath?: string;
-  /** Build command used to produce the wasm. */
-  buildCommand?: string;
-  /**
-   * Build the contract with DWARF debug info (default true): injects the
-   * cargo profile overrides that keep line tables in the wasm, enabling Rust
-   * source mapping. Set false to build untouched and debug at the wasm level.
-   */
-  debugInfo?: boolean;
-  /** Function to invoke. */
-  function: string;
-  /** Declarative function arguments. */
-  args?: ScValArg[];
   /** komet-node connection / spawn settings. */
   node?: {
     attach?: boolean;
@@ -42,11 +34,22 @@ export interface SorobanLaunchArgs extends DebugProtocol.LaunchRequestArguments 
     command?: string;
     /** Directory komet-node uses for its I/O artifacts (`--io-dir`). */
     ioDir?: string;
+    /**
+     * Per-RPC timeout in milliseconds before a komet-node request is aborted.
+     * Defaults to 10 minutes; raise it for very large contracts that take
+     * longer to upload/execute.
+     */
+    timeoutMs?: number;
   };
   /** Optional source account secret; a fresh account is seeded if omitted. */
   sourceSecret?: string;
   /** Attach mode: replay a precomputed JSONL trace file (skips all RPC). */
   rawTrace?: string;
+  /**
+   * Restrict source stepping to workspace files (default true, see S21): drops
+   * statement stops that rest in Rust std/core or crates.io dependency sources.
+   */
+  justMyCode?: boolean;
 }
 
 /** Progress reporter so backends can stream status into the debug console. */
@@ -67,8 +70,6 @@ export interface ResolvedTrace {
    * e.g. global initializers). Anchors the client's instruction pointer.
    */
   positions: (number | null)[];
-  /** Optional human-readable invocation return value, for the debug console. */
-  returnValue?: string;
 }
 
 /**

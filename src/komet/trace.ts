@@ -39,9 +39,37 @@
  * present — that is the contract this module encodes. Mapping `pos` to source
  * is the job of the SourceMapper abstraction, not this parser.
  *
+ * ## Record kinds
+ *
+ * Every record names itself with a top-level `kind`: `"instr"` for the
+ * instruction records above, or the operation name for a Soroban VM record (a
+ * contract call boundary, a storage write, the ledger baseline — see
+ * `traceEvents.ts`). Only instruction records carry `pos`, `instr`, `stack`,
+ * `locals`, `mem` and `globals`; a VM record carries fields shaped for itself
+ * alone, and `instr` holds just its kind so that a record always names what it
+ * is in the same place.
+ *
+ * `kind` is required, and a record without one is rejected. It arrived in komet
+ * v0.1.87, which reorganised the trace; traces from before that are not read.
+ *
  * This module is pure (no `vscode` / DAP imports) so it can be unit-tested in
  * plain Node against golden fixtures.
  */
+
+import { TraceParseError } from './traceError';
+import { parseTraceEvent, TraceEvent } from './traceEvents';
+
+export { TraceParseError } from './traceError';
+export type {
+  TraceEvent,
+  TraceAddress,
+  ScValJson,
+  StorageEntry,
+  AccountEntry,
+  ContractEntry,
+  CodeEntry,
+  Durability,
+} from './traceEvents';
 
 /** A typed value as it appears in a trace record: [wasmType, value]. */
 export type TypedValue = [string, unknown];
@@ -80,6 +108,13 @@ export interface TraceRecord {
    * absent key) or for traces that do not carry memory. See the module header.
    */
   mem?: MemRun[];
+  /**
+   * The typed payload of a Soroban VM event record (storage write, contract-call
+   * boundary, ledger baseline, host object allocation, …), or undefined for an
+   * ordinary instruction record and for event tags this adapter does not model.
+   * See komet/traceEvents.ts and docs/state-inspection.md.
+   */
+  event?: TraceEvent;
 }
 
 /** The opcode mnemonic of a record (e.g. "local.get"). */
@@ -102,12 +137,23 @@ export function toTraceRecord(value: unknown, lineNo: number): TraceRecord {
   }
   const obj = value as Record<string, unknown>;
 
-  const pos = obj.pos;
+  const kind = obj.kind;
+  if (typeof kind !== 'string' || kind === '') {
+    throw new TraceParseError(`trace line ${lineNo}: 'kind' must be a non-empty string`);
+  }
+  const isInstruction = kind === 'instr';
+
+  // A VM record carries no position: it does not come from anywhere in the
+  // binary. An instruction record must state one, even if null.
+  const pos = obj.pos ?? null;
   if (pos !== null && typeof pos !== 'number') {
     throw new TraceParseError(`trace line ${lineNo}: 'pos' must be a number or null`);
   }
+  if (isInstruction && obj.pos === undefined) {
+    throw new TraceParseError(`trace line ${lineNo}: 'pos' is required on an instruction record`);
+  }
 
-  if (!Array.isArray(obj.instr) || obj.instr.length === 0 || typeof obj.instr[0] !== 'string') {
+  if (isInstruction && (!Array.isArray(obj.instr) || obj.instr.length === 0 || typeof obj.instr[0] !== 'string')) {
     throw new TraceParseError(`trace line ${lineNo}: 'instr' must be a non-empty array starting with a string`);
   }
 
@@ -167,20 +213,39 @@ export function toTraceRecord(value: unknown, lineNo: number): TraceRecord {
     });
   }
 
+  // A VM record has no instruction; it names itself, so `instr` is its kind.
+  const instr: [string, ...unknown[]] = isInstruction ? (obj.instr as [string, ...unknown[]]) : [kind];
+
   return {
     pos: pos as number | null,
-    instr: obj.instr as [string, ...unknown[]],
+    instr,
     stack: rawStack as TypedValue[],
     locals,
     globals,
     mem,
+    event: eventOf(obj, kind, lineNo),
   };
 }
 
-export class TraceParseError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'TraceParseError';
+/**
+ * The record's event payload, or undefined when it has none — including when a
+ * modelled payload fails to validate. An event is auxiliary: stepping and source
+ * mapping never read it, so a malformed one degrades the state views (G4/L14)
+ * instead of failing the whole session, which is the one place this module's
+ * fail-loudly policy is deliberately inverted.
+ */
+function eventOf(
+  obj: Record<string, unknown>,
+  kind: string,
+  lineNo: number,
+): TraceEvent | undefined {
+  try {
+    return parseTraceEvent(obj, kind, lineNo);
+  } catch (e) {
+    if (e instanceof TraceParseError) {
+      return undefined;
+    }
+    throw e;
   }
 }
 

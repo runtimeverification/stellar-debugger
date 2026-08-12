@@ -22,7 +22,7 @@ const WASM_LOCATION_KIND_LOCAL = 0x00;
 
 /** A minimal, syntactically valid trace record for constructing a RuntimeState. */
 function syntheticRecord(): TraceRecord {
-  const [record] = parseTraceJsonl('{"pos":0,"instr":["nop"],"stack":[],"locals":{}}');
+  const [record] = parseTraceJsonl('{"kind":"instr","pos":0,"instr":["nop"],"stack":[],"locals":{}}');
   return record;
 }
 

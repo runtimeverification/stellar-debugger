@@ -10,6 +10,16 @@
  * ground truth), so a record's `pos` is only trusted when its instruction
  * matches the static disassembly at that code offset.
  *
+ * Position validation also enforces a cross-contract gate. A traced
+ * transaction interleaves the ROOT contract with cross-contract sub-calls
+ * (an oracle, a token, ...), yet the disassembly and DWARF are built from
+ * ONLY the root contract's wasm. A sub-call's small `pos` collides with the
+ * root's low code offsets and would mis-map to bogus source, so records
+ * executing in a contract other than the root are made invisible (position ->
+ * null). Which contract a record belongs to comes from the trace's own call
+ * boundaries, via the model's LedgerImage; a trace carrying none leaves the
+ * gate inert.
+ *
  * Missing or unreadable DWARF is NEVER fatal: the session degrades to a
  * NullSourceMapper (wasm-level debugging) with a note in the debug console.
  *
@@ -36,9 +46,33 @@ import { DwarfDebugInfo } from '../dwarf/DebugInfo';
  * with the same mnemonic. `["unknown"]` records pass on the exact-address
  * check alone. Everything else (null pos, mid-instruction offsets, records
  * from other sections' address spaces) maps to null.
+ *
+ * A cross-contract gate runs first: each record's executing contract comes from
+ * the model's ledger reconstruction (the innermost open call at that record),
+ * the root is the first one that resolves to a contract, and any record
+ * executing in a DIFFERENT contract validates to null regardless of
+ * pos/mnemonic. This is because a sub-call's `pos` collides with
+ * the root's address space while the disassembly/DWARF here is the root
+ * contract's ONLY. A record with no open call (the ledger baseline and anything
+ * else ahead of the first `callContract`, or every record of a trace that
+ * carries no call boundaries at all) is treated as "no contract" and never
+ * gated, which is what keeps older, event-less traces working unchanged.
+ *
+ * The gate assumes the supplied `disassembly` is the trace ROOT contract's wasm
+ * — true by construction in the live pipeline (`tracedWasm` is the invoked,
+ * top-level contract). A replay `wasmPath` (RawTraceBackend) for a NON-root
+ * contract would invert the gate and hide the wrong records; that is caller
+ * error, no worse than the pre-gate mis-mapping.
  */
 export function validatedPositions(model: TraceModel, disassembly: Disassembly): (number | null)[] {
-  return model.records.map((rec) => {
+  const ledger = model.ledger;
+  const contracts = model.records.map((_, i) => ledger.executingContractAt(i));
+  const root = contracts.find((contract) => contract !== undefined);
+  return model.records.map((rec, i) => {
+    const contract = contracts[i];
+    if (root !== undefined && contract !== undefined && contract !== root) {
+      return null;
+    }
     if (rec.pos === null) {
       return null;
     }

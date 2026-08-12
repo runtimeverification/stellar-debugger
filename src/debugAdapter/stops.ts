@@ -13,6 +13,8 @@
  * Pure module (no `vscode` / DAP imports) so the model is unit-testable.
  */
 
+import * as path from 'path';
+
 import { TraceRecord, opcode } from '../komet/trace';
 
 /** A function body in code-offset space: [start, end). */
@@ -246,6 +248,42 @@ export function firstNonWhitespaceColumn(text: string | null): number | null {
     }
   }
   return null;
+}
+
+/** Normalized-path substrings that mark a NON-workspace (toolchain) source (S21). */
+const NON_WORKSPACE_MARKERS = ['/.rustup/', '/.cargo/', '/rustc/'];
+
+/**
+ * Whether a mapped source path is the user's own workspace code (S21). A null
+ * path (source unknown) counts as my-code so it is never over-filtered. A path
+ * is non-workspace iff its normalized form contains any of `/.rustup/`,
+ * `/.cargo/`, or `/rustc/` — the Rust toolchain std/core and crates.io
+ * dependency source locations.
+ */
+export function isWorkspaceSource(path_: string | null): boolean {
+  if (path_ === null) {
+    return true;
+  }
+  const normalized = path.normalize(path_).replace(/\\/g, '/');
+  return !NON_WORKSPACE_MARKERS.some((marker) => normalized.includes(marker));
+}
+
+/**
+ * Filter statement-granularity run starts to just the user's own code (S21):
+ * keep each run start whose mapped source (via `pathAt`) is workspace, in order.
+ * Obeys the same non-emptiness safety as S17/S18 — if every run start is
+ * non-workspace, the unfiltered run starts stand (returned as a NEW array), so
+ * a purely-library trace is still steppable.
+ */
+export function myCodeStops(
+  runStarts: readonly number[],
+  pathAt: (index: number) => string | null,
+): number[] {
+  const result = runStarts.filter((i) => isWorkspaceSource(pathAt(i)));
+  if (result.length === 0 && runStarts.length > 0) {
+    return [...runStarts];
+  }
+  return result;
 }
 
 /** Index of the sorted range containing `pos`, or -1 when outside all of them. */

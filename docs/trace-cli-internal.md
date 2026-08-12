@@ -92,7 +92,7 @@ low-level resolver calls:
 - `source.locationForIndex(index)` → `{path, line, column?}` (or unmapped)
 - `pcAtIndex(resolved.positions, index)` → the PC
 - `variables.functionNameAt(pc)` → function name (**may be `null`** even with DWARF)
-- `makeRuntimeState(record, memoryImage, index)` + `variables.variablesInScope(pc)` +
+- `makeRuntimeState(record, model.memory, index)` + `variables.variablesInScope(pc)` +
   `variables.decodeVariable(v, state, pc)` → decoded variables
 
 Children (`DecodedValue.children`) are expanded **eagerly** into plain arrays, bounded
@@ -112,6 +112,8 @@ interface SourceStop {
   instr: string;           // renderInstr(record.instr)
   source: { path: string; line: number; column?: number } | null;
   variables: TraceVar[];
+  globals?: Record<string, { type: string; value: string }>; // module-relative index (G1)
+  ledger?: StopLedger;     // omitted when the trace carries no ledger info (L14)
 }
 interface TraceVar {
   name: string;            // "<anon>" when DWARF gives none
@@ -120,7 +122,29 @@ interface TraceVar {
   children?: TraceVar[];   // present only when expandable and within budget
   truncated?: boolean;     // marker node when the budget was hit
 }
+interface StopLedger {     // see docs/state-inspection.md for the rules
+  contract: string | null; // executing contract as a C… strkey
+  storage: {
+    durability: 'instance' | 'persistent' | 'temporary';
+    key: string;           // compact `type(value)` form
+    value: string;
+    liveUntil: number;
+    changed?: boolean;     // set only vs. opts.previousIndex, and only if it moved
+  }[];
+  accounts: { account: string; balance: number }[];
+  info?: { sequence: number; timestamp: number };
+  hostObjects: { index: number; value: string }[];
+  callStack: { from: string; to: string; function: string; depth: number; args: string[] }[];
+}
 ```
+
+`globals` and `ledger` are both **omitted entirely** rather than emitted empty when their
+source data is absent (G4, L14), so `"globals" in stop` is a valid capability probe.
+
+The `LedgerImage` and `MemoryImage` both hang off the `TraceModel`, built on first use and
+cached there — construction is a full scan of the records, so every stop of a run shares one
+of each. `opts.previousIndex` turns on the `changed` flags; `runCliTrace` threads each stop's
+predecessor through it, which is why the first stop never carries one.
 
 ## `runCliTrace(resolved, opts): string[]` — `src/trace/runTrace.ts`
 

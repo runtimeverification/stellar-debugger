@@ -8,6 +8,8 @@ import {
   xdr,
 } from '@stellar/stellar-sdk';
 import { TurnkeyPipeline } from '../src/pipeline/TurnkeyPipeline';
+import { SorobanLaunchArgs } from '../src/debugAdapter/types';
+import { KometRpcError } from '../src/komet/KometClient';
 import { MockKometNode } from './support/mockKometNode';
 import { parseWasmSections } from '../src/wasm/sections';
 import { MemoryImage } from '../src/debugAdapter/MemoryImage';
@@ -40,14 +42,17 @@ describe('TurnkeyPipeline (against mock komet-node)', () => {
     const pipeline = new TurnkeyPipeline();
     return pipeline.run(
       {
-        wasmPath: WASM,
-        function: 'add',
-        args: [
-          { value: 5, type: 'u32' },
-          { value: 6, type: 'u32' },
+        transactions: [
+          { kind: 'deploy', id: 'c', wasm: WASM },
+          {
+            kind: 'invoke',
+            contract: 'c',
+            function: 'add',
+            args: { a: 5, b: 6 },
+          },
         ],
         node: { attach: true, host: '127.0.0.1', port },
-      },
+      } as unknown as SorobanLaunchArgs,
       () => undefined,
     );
   }
@@ -72,11 +77,11 @@ describe('TurnkeyPipeline (against mock komet-node)', () => {
     // is caught even when the real-node e2e can't run (no binary installed).
     await mock.stop();
     const eventTrace = [
-      '{"pos":null,"instr":["callContract"],"from":{},"to":{},"function":"add","args":[],"depth":1,"storage":[]}',
-      '{"pos":3,"instr":["const","i32",1],"stack":[],"locals":{}}',
-      '{"pos":null,"instr":["hostCall","l","_"],"locals":{"0":["i64",1]}}',
-      '{"pos":5,"instr":["return"],"stack":[["u32",11]],"locals":{}}',
-      '{"pos":null,"instr":["endWasm"],"success":true,"depth":1,"result":{"type":"u32","value":11}}',
+      '{"kind":"callContract","from":{},"to":{},"function":"add","args":[],"depth":1,"storage":[]}',
+      '{"kind":"instr","pos":3,"instr":["const","i32",1],"stack":[],"locals":{}}',
+      '{"kind":"hostCall","module":"l","function":"_","locals":{"0":["i64",1]}}',
+      '{"kind":"instr","pos":5,"instr":["return"],"stack":[["u32",11]],"locals":{}}',
+      '{"kind":"endWasm","success":true,"depth":1,"result":{"type":"u32","value":11}}',
     ].join('\n');
     mock = new MockKometNode({ trace: eventTrace });
     port = await mock.start();
@@ -113,24 +118,87 @@ describe('TurnkeyPipeline (against mock komet-node)', () => {
     assert.deepStrictEqual(args, [5, 6]);
   });
 
-  it('surfaces a FAILED invocation as an error', async () => {
+  it('keeps a FAILED invocation debuggable: no throw, trace still fetched', async () => {
+    // A reverting tx must stay debuggable: TurnkeyPipeline (via SequenceRunner)
+    // NEVER throws on a FAILED status and fetches the traced step's trace
+    // regardless of status (see the module doc and the M3 no-throw test).
     await mock.stop();
     mock = new MockKometNode({ trace, traceStatus: 'FAILED' });
     port = await mock.start();
+
+    let resolved;
+    await assert.doesNotReject(async () => {
+      resolved = await run();
+    });
+
+    // The whole sequence still ran (four submissions) ...
+    assert.strictEqual(mock.envelopes('sendTransaction').length, 4);
+    // ... and the traced step's trace was fetched despite the FAILED status,
+    // parsed into a replayable model.
+    assert.strictEqual(mock.calls('traceTransaction'), 1);
+    assert.ok(resolved!.model.length > 0);
+    assert.strictEqual(resolved!.model.length, trace.trim().split('\n').length);
+  });
+});
+
+describe('node.timeoutMs (configurable per-RPC timeout)', () => {
+  let mock: MockKometNode;
+  let port: number;
+  let trace: string;
+
+  before(async () => {
+    trace = await fs.readFile(TRACE, 'utf8');
+  });
+
+  afterEach(async () => {
+    if (mock) {
+      await mock.stop();
+    }
+  });
+
+  function run(timeoutMs: number) {
+    const pipeline = new TurnkeyPipeline();
+    return pipeline.run(
+      {
+        transactions: [
+          { kind: 'deploy', id: 'c', wasm: WASM },
+          {
+            kind: 'invoke',
+            contract: 'c',
+            function: 'add',
+            args: { a: 5, b: 6 },
+          },
+        ],
+        node: { attach: true, host: '127.0.0.1', port, timeoutMs },
+      } as unknown as SorobanLaunchArgs,
+      () => undefined,
+    );
+  }
+
+  it('aborts a per-RPC call when node.timeoutMs is smaller than the response delay', async () => {
+    // The mock delays every sendTransaction by 200ms; a 20ms per-RPC timeout must
+    // abort the first delayed send (seeding the account) well before it returns.
+    mock = new MockKometNode({ trace, delayMethod: 'sendTransaction', delayMs: 200 });
+    port = await mock.start();
+
     await assert.rejects(
-      () => run(),
-      (err: Error) => {
-        // Still flags the FAILED status and identifies the invocation...
-        assert.match(err.message, /FAILED/);
-        assert.match(err.message, /add/);
-        // ...and pins the invocation to its transaction hash (mock's hashFor
-        // yields a 64-char hex hash, so this stays non-brittle).
-        assert.match(err.message, /tx [0-9a-f]{64}/);
-        // ...but no longer parrots the (now-fixed) value-return limitation.
-        assert.doesNotMatch(err.message, /no value|Void|update komet-node|stuck/i);
+      () => run(20),
+      (e: unknown) => {
+        assert.ok(e instanceof KometRpcError);
+        assert.match((e as Error).message, /failed/);
         return true;
       },
     );
+  });
+
+  it('lets the full sequence complete when node.timeoutMs is generous', async () => {
+    // Same per-send delay, but a 5s timeout is far above the 200ms delay, so every
+    // RPC completes and the pipeline resolves a replayable trace.
+    mock = new MockKometNode({ trace, delayMethod: 'sendTransaction', delayMs: 200 });
+    port = await mock.start();
+
+    const resolved = await run(5000);
+    assert.ok(resolved.model.length > 0);
   });
 });
 
@@ -159,11 +227,12 @@ describe('TurnkeyPipeline debug-strip + memory-backed variable inspection', () =
     const pipeline = new TurnkeyPipeline();
     return pipeline.run(
       {
-        wasmPath: INCR_WASM,
-        function: 'increment',
-        args: [{ value: 5, type: 'u32' }],
+        transactions: [
+          { kind: 'deploy', id: 'c', wasm: INCR_WASM },
+          { kind: 'invoke', contract: 'c', function: 'increment', args: { by: 5 } },
+        ],
         node: { attach: true, host: '127.0.0.1', port },
-      },
+      } as unknown as SorobanLaunchArgs,
       () => undefined,
     );
   }

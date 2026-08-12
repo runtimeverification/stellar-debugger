@@ -128,14 +128,30 @@ debugAdapter/
   SorobanDebugSession   DAP handlers (cursor moves + StoppedEvents, disassembly)
   TraceModel            records, cursor, call-depth, line + instruction stepping
   artifacts.ts          wasm bytes -> { mapper, disassembly, validated positions }
+  TraceModel            records + replay cursor; owns the two state images below,
+                        built lazily and shared by every consumer
+  MemoryImage           linear memory at a cursor (snapshot-on-change index)
+  LedgerImage           Stellar ledger at a cursor: storage/TTLs, balances,
+                        ledger info, host objects, call stack, and the executing
+                        contract; undoes the writes of a trapped sub-call
+                        (docs/state-inspection.md)
+  ledgerView.ts         the ledger presentation both views share: one snapshot
+                        per stop, rendered as a lazy ChildVar tree for DAP
   backends/
     RawTraceBackend     replay a JSONL trace file (+ optional wasmPath for symbols)
     LiveBackend         turnkey build + spawn + deploy + trace
 komet/
   trace.ts              JSONL -> TraceRecord[] (K-style mnemonics, section-relative pos)
+  traceEvents.ts        Soroban VM event payloads -> TraceEvent (a malformed or
+                        unknown payload degrades to no event, never fails a session)
   mnemonics.ts          K-style instr arrays -> wasm mnemonics ('i64.const 255')
   KometClient.ts        JSON-RPC client (getHealth/sendTransaction/traceTransaction/...)
-soroban/scval.ts        launch args -> ScVals (@stellar/stellar-sdk)
+soroban/specEncode.ts   invoke args -> ScVals, encoded against the contract's own
+                        contractspecv0 spec; `${...}` substitution
+soroban/scvalJson.ts    trace ScVal JSON -> DecodedValue (display + lazy children)
+soroban/strkey.ts       raw address bytes -> C…/G… strkey (SDK-free: the SDK costs
+                        ~8s of module load inside the adapter, which alone blows
+                        the DAP handshake)
 wasm/
   sections.ts           wasm section walker (offsets, custom-section lookup)
   Disassembly.ts        static disassembly (wasmparser), code-offset addressed

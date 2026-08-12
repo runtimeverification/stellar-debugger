@@ -60,6 +60,7 @@ describe('parseTraceArgs (M3 CLI devex)', () => {
         '--contract',
         '--function',
         '--allow-no-source',
+        '--no-just-my-code',
         '-h, --help',
         'Examples',
       ]) {
@@ -104,10 +105,29 @@ describe('parseTraceArgs (M3 CLI devex)', () => {
   });
 
   describe('live mode (--contract/--wasm + --function)', () => {
-    it('--contract . --function add → run with launch.contract and launch.function', () => {
+    it('--contract . --function add → run with a deploy+invoke transactions config', () => {
       const p = asRun(parseTraceArgs(['--contract', '.', '--function', 'add']));
-      assert.strictEqual(p.launch.contract, '.');
-      assert.strictEqual(p.launch.function, 'add');
+
+      // Live mode now builds the single `transactions` schema: a deploy of the
+      // --contract dir under the fixed handle id 'contract', then an invoke of
+      // --function against that handle. (Cast through the not-yet-updated
+      // TraceLaunch type, which the implementer will reshape.)
+      const launch = p.launch as unknown as { transactions?: unknown[] };
+      const steps = launch.transactions!;
+      assert.strictEqual(steps.length, 2);
+
+      const deploy = steps[0] as { kind: string; id: string; contract?: string };
+      assert.strictEqual(deploy.kind, 'deploy');
+      assert.strictEqual(deploy.id, 'contract');
+      assert.strictEqual(deploy.contract, '.');
+
+      const invoke = steps[1] as { kind: string; contract: string; function: string };
+      assert.strictEqual(invoke.kind, 'invoke');
+      assert.strictEqual(invoke.contract, 'contract');
+      assert.strictEqual(invoke.function, 'add');
+
+      // The run result echoes the function name for the trace's meta record.
+      assert.strictEqual((p as unknown as { function?: string }).function, 'add');
     });
   });
 
@@ -119,8 +139,24 @@ describe('parseTraceArgs (M3 CLI devex)', () => {
       assert.ok(msg.includes('Invalid --args-json'), msg);
     });
 
-    it('valid JSON array → run with launch.args of the right length', () => {
+    it('valid JSON object → run with the invoke step carrying the named args', () => {
       const p = asRun(
+        parseTraceArgs(['--contract', '.', '--function', 'a', '--args-json', '{"x":1}']),
+      );
+      const launch = p.launch as unknown as { transactions?: unknown[] };
+      const invoke = launch.transactions![1] as { args?: Record<string, unknown> };
+      assert.deepStrictEqual(invoke.args, { x: 1 });
+    });
+
+    it('valid JSON that is not an object (number) → "keyed by parameter name"', () => {
+      const msg = asError(
+        parseTraceArgs(['--contract', '.', '--function', 'a', '--args-json', '5']),
+      );
+      assert.ok(msg.includes('keyed by parameter name'), msg);
+    });
+
+    it('valid JSON that is an array (the removed positional form) → rejected', () => {
+      const msg = asError(
         parseTraceArgs([
           '--contract',
           '.',
@@ -130,22 +166,7 @@ describe('parseTraceArgs (M3 CLI devex)', () => {
           '[{"value":1,"type":"u32"}]',
         ]),
       );
-      assert.ok(p.launch.args, 'launch.args should be present');
-      assert.strictEqual(p.launch.args!.length, 1);
-    });
-
-    it('valid JSON that is not an array (number) → "expected a JSON array"', () => {
-      const msg = asError(
-        parseTraceArgs(['--contract', '.', '--function', 'a', '--args-json', '5']),
-      );
-      assert.ok(msg.includes('expected a JSON array'), msg);
-    });
-
-    it('valid JSON that is not an array (object) → "expected a JSON array"', () => {
-      const msg = asError(
-        parseTraceArgs(['--contract', '.', '--function', 'a', '--args-json', '{}']),
-      );
-      assert.ok(msg.includes('expected a JSON array'), msg);
+      assert.ok(msg.includes('keyed by parameter name'), msg);
     });
   });
 
@@ -196,6 +217,16 @@ describe('parseTraceArgs (M3 CLI devex)', () => {
     it('--allow-no-source → run with opts.allowNoSource === true', () => {
       const p = asRun(parseTraceArgs(['--raw-trace', 'r', '--allow-no-source']));
       assert.strictEqual(p.opts.allowNoSource, true);
+    });
+
+    it('--no-just-my-code → run with opts.justMyCode === false (S21)', () => {
+      const p = asRun(parseTraceArgs(['--raw-trace', 'r', '--no-just-my-code']));
+      assert.strictEqual(p.opts.justMyCode, false);
+    });
+
+    it('without the flag, opts.justMyCode is undefined (defaults to true downstream)', () => {
+      const p = asRun(parseTraceArgs(['--raw-trace', 'r']));
+      assert.strictEqual(p.opts.justMyCode, undefined);
     });
 
     it('--out o.jsonl → run with out === "o.jsonl"', () => {

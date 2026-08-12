@@ -52,13 +52,10 @@ class SorobanConfigurationProvider implements vscode.DebugConfigurationProvider 
     if (config.request === undefined) {
       config.request = 'launch';
     }
-    if (!config.contract && !config.wasmPath && !config.rawTrace && folder) {
-      config.contract = folder.uri.fsPath;
-    }
     applyBinaryPaths(config, folder);
-    if (!config.function && !config.rawTrace) {
+    if (!config.rawTrace && !Array.isArray(config.transactions)) {
       return vscode.window
-        .showErrorMessage('Soroban debug: a `function` (or a `rawTrace` file) is required in the launch configuration.')
+        .showErrorMessage('Soroban debug: a `transactions` array (or a `rawTrace` file) is required in the launch configuration.')
         .then(() => undefined);
     }
     return config;
@@ -85,9 +82,17 @@ function applyBinaryPaths(
   if (!config.node.command) {
     config.node.command = kometNodePath;
   }
-  // The build command runs through a shell, so quote a path that contains spaces.
-  if (!config.buildCommand) {
-    config.buildCommand = `${quoteForShell(stellarPath)} contract build`;
+  // Inject the resolved build command into any `deploy` step that doesn't set
+  // its own, so the `soroban.stellar.path` setting still applies under the
+  // `transactions` schema. The build command runs through a shell, so quote a
+  // path that contains spaces.
+  const buildCommand = `${quoteForShell(stellarPath)} contract build`;
+  if (Array.isArray(config.transactions)) {
+    for (const step of config.transactions) {
+      if (step && step.kind === 'deploy' && !step.buildCommand) {
+        step.buildCommand = buildCommand;
+      }
+    }
   }
 }
 
@@ -112,8 +117,9 @@ async function startDebugFromActiveEditor(): Promise<void> {
     type: 'soroban',
     request: 'launch',
     name: `Soroban: Debug ${fn}`,
-    contract: folder.uri.fsPath,
-    function: fn,
-    args: [],
+    transactions: [
+      { kind: 'deploy', id: 'contract', contract: folder.uri.fsPath },
+      { kind: 'invoke', contract: 'contract', function: fn },
+    ],
   });
 }
