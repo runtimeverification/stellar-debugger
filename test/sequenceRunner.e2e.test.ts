@@ -1,6 +1,5 @@
 /**
- * M4 acceptance: the generalized multi-transaction pipeline, end-to-end against
- * a REAL komet-node.
+ * The multi-transaction pipeline, end-to-end against a REAL komet-node.
  *
  * These are the ONLY tests that can catch a breaking change in komet-node's
  * JSON-RPC surface, its trace format, or its cross-transaction ledger
@@ -11,11 +10,9 @@
  * silently — set KOMET_NODE_E2E=0 to opt out only where the node genuinely
  * cannot be installed. (Same convention as test/integration.node.test.ts.)
  *
- * Everything is driven through `TurnkeyPipeline.run(config, report)` using the
- * NEW `transactions` config shape — this is what forces the M4 wiring: the
- * pipeline must normalize the config (M1) and execute it through the
- * SequenceRunner (M3) against the spawned node. The M4 acceptance scenarios
- * pinned here (spec section "M4 acceptance"):
+ * Everything is driven through `LiveBackend.resolve(config, report)`, which
+ * normalizes the `transactions` config and executes it through the
+ * `SequenceRunner` against the spawned node. The scenarios pinned here:
  *
  *   1. deploy ctor_probe -> invoke __constructor(admin:${sourceAddress}) ->
  *      invoke admin_set(_nonce:1), trace "last": a non-empty, replayable trace
@@ -33,16 +30,13 @@
  *
  * The port is 8056 so a full `npm test` run does not collide with
  * integration.node.test.ts (port 8000).
- *
- * The wiring does not exist yet — this suite is the TDD red phase and drives
- * `TurnkeyPipeline.run` with the new config shape on purpose.
  */
 
 import * as assert from 'assert';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { Keypair } from '@stellar/stellar-sdk';
-import { TurnkeyPipeline } from '../src/pipeline/TurnkeyPipeline';
+import { LiveBackend } from '../src/debugAdapter/backends/LiveBackend';
 import { SorobanLaunchArgs } from '../src/debugAdapter/types';
 import { TraceEvent } from '../src/komet/trace';
 
@@ -64,9 +58,8 @@ const PROBE_TIMEOUT_MS = Number(process.env.KOMET_NODE_PROBE_TIMEOUT_MS ?? 30_00
 // reproducible — never `Keypair.random()`.
 const SOURCE_SECRET = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 42)).secret();
 
-// --- The new `transactions` config shape this milestone forces through the
-// pipeline. Typed locally; cast at the call site because the pipeline's public
-// signature does not yet accept it (that is the M4 wiring under test). -------
+// --- The `transactions` config shape, typed locally so these tests state it
+// independently of the pipeline's own types (cast at the call site). ----------
 interface DeployTx {
   kind: 'deploy';
   id: string;
@@ -120,18 +113,18 @@ function invocationReturnedTrue(model: { records: { instr: [string, ...unknown[]
   return top[1] === 1 || top[1] === true;
 }
 
-describe('M4 SequenceRunner e2e', function () {
+describe('SequenceRunner e2e', function () {
   this.timeout(300_000);
 
   // Every spawned pipeline is tracked so `after` can guarantee the node is
   // killed even if an assertion (or the missing wiring) aborts a test midway.
-  const active: TurnkeyPipeline[] = [];
+  const active: LiveBackend[] = [];
 
   async function runSequence(config: TxConfig) {
-    const pipeline = new TurnkeyPipeline();
+    const pipeline = new LiveBackend();
     active.push(pipeline);
     try {
-      return await pipeline.run(asRunArgs(config), (msg) => console.log(msg));
+      return await pipeline.resolve(asRunArgs(config), (msg) => console.log(msg));
     } finally {
       await pipeline.dispose();
       const i = active.indexOf(pipeline);

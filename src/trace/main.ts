@@ -1,41 +1,24 @@
 /**
  * Thin CLI entry for the one-shot trace projection (`soroban-trace`).
  *
- * Parses argv (via `parseTraceArgs`), then dispatches: show help (stdout, exit
- * 0), report a usage error (stderr, exit 2), or resolve a trace through the
- * selected backend, project it to JSONL via `runCliTrace`, and write the result
- * to `--out` (or stdout). Coverage-excluded: the real logic lives in
- * `cliArgs.ts` / `runTrace.ts` / `projectStop.ts`, exercised directly by tests.
+ * Parses argv with the pure `parseTraceArgs`, then — for a `run` result —
+ * resolves a trace through the selected backend, projects it to JSONL via
+ * `runCliTrace`, and writes it to `--out` (or stdout). Help and usage errors are
+ * the shared `runCli` shell's business. Coverage-excluded: the real logic lives
+ * in `cliArgs.ts` / `runTrace.ts` / `projectStop.ts`, exercised directly by tests.
  */
 
 import * as fs from 'fs';
 import { backendFor } from '../debugAdapter/backendFor';
+import { runCli } from '../cli/shell';
 import { parseTraceArgs } from './cliArgs';
 import { runCliTrace } from './runTrace';
 
-async function main(): Promise<void> {
-  const p = parseTraceArgs(process.argv.slice(2));
-
-  if (p.kind === 'help') {
-    process.stdout.write(p.text + '\n');
-    return;
-  }
-  if (p.kind === 'error') {
-    process.stderr.write(p.message + '\n');
-    process.exitCode = 2;
-    return;
-  }
-
-  const { launch, out, opts } = p;
+runCli(parseTraceArgs(process.argv.slice(2)), async ({ launch, out, opts, ...meta }) => {
   const backend = backendFor(launch);
   try {
     const resolved = await backend.resolve(launch, (msg) => process.stderr.write(msg + '\n'));
-    const lines = runCliTrace(resolved, {
-      function: p.function,
-      wasm: p.wasm,
-      ...opts,
-    });
-    const output = lines.join('\n') + '\n';
+    const output = runCliTrace(resolved, { function: meta.function, wasm: meta.wasm, ...opts }).join('\n') + '\n';
     if (out) {
       fs.writeFileSync(out, output);
     } else {
@@ -44,9 +27,4 @@ async function main(): Promise<void> {
   } finally {
     await backend.dispose();
   }
-}
-
-main().catch((err) => {
-  process.stderr.write(String(err instanceof Error ? err.stack ?? err.message : err) + '\n');
-  process.exit(1);
 });

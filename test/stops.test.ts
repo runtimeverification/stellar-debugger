@@ -11,8 +11,7 @@
  *     and S18 (drop inner braces, keep the function's final epilogue brace),
  *     never returning empty for non-empty input.
  *
- * These are the contract the higher-level model/DAP suites build on; the
- * implementation does not exist yet, so this file is the red anchor for it.
+ * These are the contract the higher-level model/DAP suites build on.
  */
 
 import * as assert from 'assert';

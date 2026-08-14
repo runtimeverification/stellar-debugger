@@ -56,7 +56,7 @@ function norm(raw: unknown): Normalized {
   return normalizeConfig(raw as never) as unknown as Normalized;
 }
 
-describe('M1 normalizeConfig', () => {
+describe('normalizeConfig', () => {
   // ------------------------------------------------------------------------
   // 1. New `transactions` + `trace` schema → canonical steps, in order.
   // ------------------------------------------------------------------------
@@ -98,7 +98,7 @@ describe('M1 normalizeConfig', () => {
       assert.strictEqual(deploy.wasm, '/abs/pool.wasm');
     });
 
-    it('keeps invoke function, handle ref and named args verbatim (no encoding at M1)', () => {
+    it('keeps invoke function, handle ref and named args verbatim (no encoding here)', () => {
       const invoke = norm(raw).steps[2] as InvokeStep;
       assert.strictEqual(invoke.kind, 'invoke');
       assert.strictEqual(invoke.contract, 'pool');

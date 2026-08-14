@@ -12,10 +12,7 @@
 import { promises as fs } from 'fs';
 import { parseTraceJsonl } from '../../komet/trace';
 import { TraceModel } from '../TraceModel';
-import { Disassembly } from '../../wasm/Disassembly';
-import { NullSourceMapper } from '../../sourcemap/NullSourceMapper';
-import { NullVariableResolver } from '../../sourcemap/VariableResolver';
-import { buildDebugArtifacts } from '../artifacts';
+import { buildDebugArtifacts, traceDerivedArtifacts } from '../artifacts';
 import { ProgressReporter, ResolvedTrace, SessionBackend, SorobanLaunchArgs } from '../types';
 
 export class RawTraceBackend implements SessionBackend {
@@ -25,25 +22,16 @@ export class RawTraceBackend implements SessionBackend {
     }
     report(`Reading trace from ${args.rawTrace}`);
     const jsonl = await fs.readFile(args.rawTrace, 'utf8');
-    const records = parseTraceJsonl(jsonl);
-    const model = new TraceModel(records);
+    const model = new TraceModel(parseTraceJsonl(jsonl));
 
     if (args.wasmPath) {
       report(`Reading contract wasm from ${args.wasmPath}`);
       const wasm = await fs.readFile(args.wasmPath);
-      const { source, variables, disassembly, positions } = buildDebugArtifacts(wasm, model, report);
-      return { model, source, variables, disassembly, positions };
+      return { model, ...buildDebugArtifacts(wasm, model, report) };
     }
-    // Without wasm there is nothing to validate positions against; the raw
-    // `pos` values are used as-is, which is self-consistent because the
-    // trace-derived disassembly is built from those same values.
-    return {
-      model,
-      source: new NullSourceMapper(),
-      variables: new NullVariableResolver(),
-      disassembly: Disassembly.fromTrace(model),
-      positions: records.map((rec) => rec.pos),
-    };
+    // Without wasm there is nothing to validate positions against, and nothing
+    // to map source from: the replay degrades to trace-derived instructions.
+    return { model, ...traceDerivedArtifacts(model) };
   }
 
   async dispose(): Promise<void> {

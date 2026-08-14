@@ -1,5 +1,5 @@
 /**
- * The cross-contract gate (M3), and the derivation it rests on.
+ * The cross-contract gate, and the derivation it rests on.
  *
  * A traced transaction's records include the ROOT contract plus cross-contract
  * sub-calls (an oracle, a token, ...). The adapter builds its disassembly +

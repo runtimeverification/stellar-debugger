@@ -1,324 +1,187 @@
 /**
- * M0 ground-truth script: empirically determine
- *   (a) the address convention of komet-node's `pos` (wasm-file offset vs
- *       code-section-relative), by cross-checking every trace record's opcode
- *       against a wasmparser disassembly of the exact wasm that produced it;
- *   (b) the delta between DWARF .debug_line addresses and that convention;
- *   (c) the DWARF version rustc emits for wasm32v1-none.
+ * Check the address convention a captured fixture pair rests on.
  *
- * Prereqs: `npm run pretest` (compiles src to out/), a debug-built adder wasm
- * (CARGO_PROFILE_RELEASE_DEBUG=true CARGO_PROFILE_RELEASE_STRIP=none
- *  stellar contract build), and komet-node available.
+ * The whole debugger assumes ONE address space: komet-node's `pos` for function
+ * code, the DWARF `.debug_line` addresses, and the static disassembly are all
+ * offsets relative to the CODE SECTION PAYLOAD, with no delta between them.
+ * That is an empirical property of the toolchain, so this script re-derives it
+ * from a real (wasm, trace) pair rather than trusting it — run it whenever the
+ * fixtures are regenerated, or after a komet-node or rustc upgrade.
  *
- * Usage: node scripts/verify-addresses.mjs [--wasm <path>] [--trace-out <path>]
+ * It reports, for each candidate convention (file offset / section start /
+ * section payload):
+ *   - how many trace records' mnemonics agree with the disassembly at `pos + delta`;
+ *   - how many `.debug_line` rows land on an instruction boundary at `addr + delta`.
+ * The payload-relative candidate must win both, overwhelmingly.
+ *
+ * Misses are expected and explained: komet prints instructions its decoder does
+ * not know as `unknown` (unverifiable), and records evaluating GLOBAL
+ * INITIALIZERS carry a `pos` in the *globals* section's address space — the
+ * ambiguity that forces per-record mnemonic validation in the adapter
+ * (src/debugAdapter/artifacts.ts). Those are listed separately.
+ *
+ * Everything is read through the project's own parsers (out/src), so this script
+ * cannot drift from what the debugger actually does.
+ *
+ * Prereqs: `npm run pretest` (compiles src/ to out/).
+ *
+ * Usage: node scripts/verify-addresses.mjs --wasm <path> --trace <path.jsonl>
  */
 
 import { createRequire } from 'module';
-import { readFileSync, writeFileSync } from 'fs';
+import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import * as path from 'path';
 
 const require = createRequire(import.meta.url);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const out = (m) => require(path.join(root, 'out/src', m));
+
+const { parseWasmSections } = out('wasm/sections.js');
+const { Disassembly } = out('wasm/Disassembly.js');
+const { DwarfLineTable } = out('dwarf/LineTable.js');
+const { parseTraceJsonl } = out('komet/trace.js');
+const { normalizeMnemonic } = out('komet/mnemonics.js');
 
 const argv = process.argv.slice(2);
-function flag(name, dflt) {
+function flag(name) {
   const i = argv.indexOf(name);
-  return i >= 0 ? argv[i + 1] : dflt;
+  return i >= 0 ? argv[i + 1] : null;
 }
+
 // NOTE: the *deps* wasm is the pristine wasm-ld output. `stellar contract build`
-// rewrites `release/adder.wasm` to inject contractmetav0 and that rewrite EMPTIES
-// all DWARF line programs (headers survive, rows are dropped). Debugging must use
-// the deps artifact.
-const wasmPath = flag('--wasm', path.join(root, 'examples/adder/target/wasm32v1-none/release/deps/adder.wasm'));
-const traceOut = flag('--trace-out', null);
-const kometCommand = flag('--komet-node', '/home/node/.komet-node/bin/komet-node');
-
-// ---------------------------------------------------------------------------
-// 1. Wasm section walk (self-contained; the real parser lands in M1)
-// ---------------------------------------------------------------------------
-function readLeb(bytes, at) {
-  let result = 0, shift = 0, pos = at;
-  for (;;) {
-    const b = bytes[pos++];
-    result |= (b & 0x7f) << shift;
-    if ((b & 0x80) === 0) break;
-    shift += 7;
-  }
-  return [result >>> 0, pos];
-}
-
-function parseSections(bytes) {
-  if (bytes.length < 8 || bytes[0] !== 0x00 || bytes[1] !== 0x61 || bytes[2] !== 0x73 || bytes[3] !== 0x6d) {
-    throw new Error('not a wasm binary');
-  }
-  const sections = [];
-  let at = 8;
-  while (at < bytes.length) {
-    const start = at;
-    const id = bytes[at++];
-    let size;
-    [size, at] = readLeb(bytes, at);
-    const payloadStart = at;
-    const payloadEnd = at + size;
-    let name;
-    if (id === 0) {
-      let nameLen, nameAt;
-      [nameLen, nameAt] = readLeb(bytes, payloadStart);
-      name = Buffer.from(bytes.slice(nameAt, nameAt + nameLen)).toString('utf8');
-      sections.push({ id, name, start, payloadStart: nameAt + nameLen, payloadEnd });
-    } else {
-      sections.push({ id, start, payloadStart, payloadEnd });
-    }
-    at = payloadEnd;
-  }
-  return sections;
+// rewrites `release/<name>.wasm` to inject contractmetav0, and that rewrite
+// EMPTIES all DWARF line programs (headers survive, rows are dropped). Source
+// mapping must use the deps artifact.
+const wasmPath = flag('--wasm');
+const tracePath = flag('--trace');
+if (!wasmPath || !tracePath) {
+  console.error('required: --wasm <path> --trace <path.jsonl>');
+  process.exit(2);
 }
 
 const wasm = new Uint8Array(readFileSync(wasmPath));
-const sections = parseSections(wasm);
-const code = sections.find((s) => s.id === 10);
-console.log(`wasm: ${wasmPath} (${wasm.length} bytes)`);
-console.log('sections:');
-for (const s of sections) {
-  console.log(`  id=${String(s.id).padStart(2)} ${s.name ?? ''} start=${s.start} payload=[${s.payloadStart},${s.payloadEnd})`);
+const { sections, codeSection } = parseWasmSections(wasm);
+if (!codeSection) {
+  throw new Error('wasm module has no code section');
 }
-if (!code) throw new Error('no code section');
-const debugNames = ['.debug_line', '.debug_info', '.debug_abbrev', '.debug_str'];
-for (const n of debugNames) {
-  if (!sections.some((s) => s.name === n)) throw new Error(`missing custom section ${n}`);
+
+console.log(`wasm: ${wasmPath} (${wasm.length} bytes)`);
+for (const s of sections) {
+  console.log(
+    `  id=${String(s.id).padStart(2)} ${s.name ?? ''} start=${s.start} payload=[${s.payloadStart},${s.payloadEnd})`,
+  );
+}
+for (const name of ['.debug_line', '.debug_info', '.debug_abbrev', '.debug_str']) {
+  if (!sections.some((s) => s.name === name)) {
+    throw new Error(`missing custom section ${name} — was the wasm built with debug info?`);
+  }
 }
 console.log('\nAll required DWARF sections present.');
 
-// DWARF versions: peek the version fields.
-function sectionBytes(name) {
-  const s = sections.find((x) => x.name === name);
-  return s ? wasm.slice(s.payloadStart, s.payloadEnd) : undefined;
-}
-{
-  const dl = sectionBytes('.debug_line');
-  const dlLen = dl[0] | (dl[1] << 8) | (dl[2] << 16) | (dl[3] << 24);
-  const dlVer = dl[4] | (dl[5] << 8);
-  const di = sectionBytes('.debug_info');
-  const diVer = di[4] | (di[5] << 8);
-  if (dlLen === 0xffffffff) throw new Error('64-bit DWARF (unexpected)');
-  console.log(`.debug_line unit version: ${dlVer}, .debug_info CU version: ${diVer}`);
-}
+// Disassembly.fromWasm already reports CODE-PAYLOAD-relative addresses, so a
+// candidate delta is applied to the trace/DWARF side of the comparison.
+const disassembly = Disassembly.fromWasm(wasm);
+const instructions = disassembly.instructions;
+const byAddress = new Map(instructions.map((i) => [i.address, i]));
+console.log(
+  `\ndisassembly: ${instructions.length} instructions in ` +
+    `[${instructions[0].address}, ${instructions[instructions.length - 1].address}]`,
+);
+console.log(`function bodies: ${JSON.stringify(disassembly.functionRanges)}`);
 
-// ---------------------------------------------------------------------------
-// 2. Disassemble with wasmparser, offsets relative to file start
-// ---------------------------------------------------------------------------
-const { BinaryReader } = require(path.join(root, 'node_modules/wasmparser/dist/cjs/WasmParser.js'));
-const { WasmDisassembler } = require(path.join(root, 'node_modules/wasmparser/dist/cjs/WasmDis.js'));
+const records = parseTraceJsonl(readFileSync(tracePath, 'utf8'));
+console.log(`trace: ${tracePath} (${records.length} records)`);
 
-const reader = new BinaryReader();
-reader.setData(wasm.buffer.slice(wasm.byteOffset, wasm.byteOffset + wasm.byteLength), 0, wasm.length);
-const dis = new WasmDisassembler();
-dis.addOffsets = true;
-dis.disassembleChunk(reader);
-const result = dis.getResult();
-
-const instrs = [];
-for (let i = 0; i < result.lines.length; i++) {
-  const off = result.offsets[i];
-  const inBody = result.functionBodyOffsets.some((r) => off >= r.start && off < r.end);
-  if (inBody) instrs.push({ address: off, text: result.lines[i].trim() });
-}
-instrs.sort((a, b) => a.address - b.address);
-const byAddr = new Map(instrs.map((x) => [x.address, x]));
-console.log(`\ndisassembly: ${instrs.length} instructions in [${instrs[0].address}, ${instrs[instrs.length - 1].address}]`);
-console.log(`functionBodyOffsets: ${JSON.stringify(result.functionBodyOffsets)}`);
-console.log(`code section: start=${code.start} payloadStart=${code.payloadStart}`);
-
-// ---------------------------------------------------------------------------
-// 3. Capture a real trace via the compiled TurnkeyPipeline
-// ---------------------------------------------------------------------------
-const { TurnkeyPipeline } = require(path.join(root, 'out/src/pipeline/TurnkeyPipeline.js'));
-const pipeline = new TurnkeyPipeline();
-let records;
-try {
-  const resolved = await pipeline.run(
-    {
-      wasmPath,
-      function: 'add',
-      args: [
-        { value: 4, type: 'u32' },
-        { value: 3, type: 'u32' },
-      ],
-      node: { command: kometCommand, port: 8011 },
-    },
-    (m) => console.log(`  [pipeline] ${m}`),
-  );
-  records = resolved.model.records;
-  if (resolved.returnValue !== undefined) console.log(`returnValue: ${resolved.returnValue}`);
-} finally {
-  await pipeline.dispose();
-}
-console.log(`\ntrace: ${records.length} records`);
-if (traceOut) {
-  const jsonl = records
-    .map((r) => JSON.stringify({ pos: r.pos, instr: r.instr, stack: r.stack, locals: r.locals }))
-    .join('\n') + '\n';
-  writeFileSync(traceOut, jsonl);
-  console.log(`trace written to ${traceOut}`);
-}
-
-// ---------------------------------------------------------------------------
-// 4. Determine the komet `pos` convention.
-//
-// Discovered reality (2026-07-07, komet-node from /home/node/.komet-node):
-//   - komet opcode names are K-style: ["const","i64",255], ["and","i64"],
-//     ["local.get",0], ["block"], and ["unknown"] for instructions its printer
-//     does not know (e.g. `if`).
-//   - For records executing FUNCTION CODE, `pos` is relative to the CODE
-//     SECTION PAYLOAD (first byte after the section id+size header).
-//   - Records evaluating GLOBAL INITIALIZERS carry `pos` relative to the
-//     GLOBALS SECTION payload — same numeric range, different section, so a
-//     bare `pos` is ambiguous. Per-record validation against the static
-//     disassembly (mnemonic match) is required to accept a mapping.
-// ---------------------------------------------------------------------------
-
-/** Normalize a komet instr array to a wasmparser-style mnemonic, or null for unknown. */
-function normalizeKomet(instr) {
-  const [op, ...rest] = instr;
-  if (op === 'unknown') return null;
-  // Typed ALU ops arrive as [op, type]: ["and","i64"] -> "i64.and".
-  if (rest.length >= 1 && (rest[0] === 'i32' || rest[0] === 'i64' || rest[0] === 'f32' || rest[0] === 'f64')) {
-    return `${rest[0]}.${op}`;
-  }
-  return op; // local.get, block, call, return, ...
-}
-
+// A `pos` is stated relative to some section; the candidate says which, as the
+// offset that must be SUBTRACTED to reach the code-payload space.
 const candidates = [
-  { name: 'file-offset (delta 0)', delta: 0 },
-  { name: 'code-section-start-relative', delta: code.start },
-  { name: 'code-payload-relative', delta: code.payloadStart },
+  { name: 'code-payload-relative', delta: 0 },
+  { name: 'code-section-start-relative', delta: codeSection.start - codeSection.payloadStart },
+  { name: 'file-offset', delta: -codeSection.payloadStart },
 ];
-console.log('\nkomet pos convention check (mnemonic match at pos+delta; "unknown" counts as unverifiable):');
-let posConvention = null;
-for (const c of candidates) {
-  let match = 0, miss = 0, unverifiable = 0;
-  const misses = [];
-  for (const r of records) {
-    if (r.pos === null) continue;
-    const inst = byAddr.get(r.pos + c.delta);
-    const want = normalizeKomet(r.instr);
-    if (want === null) {
-      if (inst) unverifiable++; else { miss++; misses.push(`pos=${r.pos} unknown, no instr @${r.pos + c.delta}`); }
+
+console.log('\nkomet `pos` convention (mnemonic agreement at pos + delta):');
+let best = null;
+for (const candidate of candidates) {
+  let match = 0;
+  let miss = 0;
+  let unverifiable = 0;
+  for (const record of records) {
+    if (record.pos === null) {
       continue;
     }
-    const mnemonic = inst ? inst.text.split(/[\s(]/)[0] : null;
-    if (mnemonic === want) match++;
-    else {
+    const instruction = byAddress.get(record.pos + candidate.delta);
+    const want = normalizeMnemonic(record.instr);
+    if (want === null) {
+      // komet could not decode the opcode: nothing to compare against.
+      instruction ? unverifiable++ : miss++;
+      continue;
+    }
+    if (instruction && instruction.text.split(/\s+/, 1)[0] === want) {
+      match++;
+    } else {
       miss++;
-      if (misses.length < 4) misses.push(`pos=${r.pos} trace=${want} disasm@${r.pos + c.delta}=${inst ? inst.text : '<none>'}`);
     }
   }
-  console.log(`  ${c.name}: ${match} match, ${miss} miss, ${unverifiable} unverifiable${misses.length ? '  e.g. ' + misses.join(' | ') : ''}`);
-  // The best convention maximizes matches; global-initializer records are
-  // EXPECTED to miss (their pos is in the globals section's address space).
-  if (!posConvention || match > posConvention.match) posConvention = { ...c, match, miss };
+  console.log(`  ${candidate.name} (delta ${candidate.delta}): ${match} match, ${miss} miss, ${unverifiable} unverifiable`);
+  if (!best || match > best.match) {
+    best = { ...candidate, match };
+  }
 }
-console.log(`==> best komet pos convention: ${posConvention.name} (${posConvention.match} matches; misses are global-init records)`);
+console.log(`==> best: ${best.name}`);
+if (best.delta !== 0) {
+  console.error('MISMATCH: the trace is NOT code-payload-relative — the adapter assumes it is.');
+  process.exitCode = 1;
+}
 
-// Show that the misses are exactly the globals-section initializers.
+// The remaining misses should be exactly the global-initializer records, whose
+// `pos` indexes the globals section's payload instead.
 const globals = sections.find((s) => s.id === 6);
-if (globals) {
-  console.log('\nglobal-initializer hypothesis (miss records vs globals section payload):');
-  for (const r of records) {
-    if (r.pos === null) continue;
-    const inst = byAddr.get(r.pos + posConvention.delta);
-    const want = normalizeKomet(r.instr);
-    if (want !== null && (!inst || inst.text.split(/[\s(]/)[0] !== want)) {
-      const fileOff = globals.payloadStart + r.pos;
-      const byte = wasm[fileOff];
-      const looksConst = byte === 0x41 && want === 'i32.const';
-      console.log(`  pos=${r.pos} ${JSON.stringify(r.instr)} -> globals payload+${r.pos} = file ${fileOff}, byte 0x${byte.toString(16)} ${looksConst ? '= i32.const opcode ✓' : ''}`);
+const misses = records.filter((r) => {
+  if (r.pos === null) {
+    return false;
+  }
+  const want = normalizeMnemonic(r.instr);
+  const instruction = byAddress.get(r.pos);
+  return want !== null && (!instruction || instruction.text.split(/\s+/, 1)[0] !== want);
+});
+if (misses.length > 0) {
+  console.log(`\n${misses.length} record(s) do not match the code section; global-initializer hypothesis:`);
+  for (const record of misses) {
+    const line = `  pos=${record.pos} ${JSON.stringify(record.instr)}`;
+    if (!globals) {
+      console.log(`${line} — no globals section to attribute it to`);
+      continue;
     }
+    const fileOffset = globals.payloadStart + record.pos;
+    console.log(`${line} -> globals payload+${record.pos} = file ${fileOffset}, byte 0x${wasm[fileOffset].toString(16)}`);
   }
 }
 
-// ---------------------------------------------------------------------------
-// 5. Determine the DWARF delta: decode .debug_line addresses (throwaway v4/v5
-//    line-program walk, addresses only) and check which delta lands them on
-//    instruction boundaries.
-// ---------------------------------------------------------------------------
-function decodeLineAddresses(dl) {
-  // Minimal state machine: we only track `address` at each emitted row.
-  const addrs = [];
-  let at = 0;
-  const u16 = (p) => dl[p] | (dl[p + 1] << 8);
-  const u32 = (p) => (dl[p] | (dl[p + 1] << 8) | (dl[p + 2] << 16) | (dl[p + 3] << 24)) >>> 0;
-  while (at < dl.length) {
-    const unitLen = u32(at);
-    const unitEnd = at + 4 + unitLen;
-    const version = u16(at + 4);
-    let p = at + 6;
-    if (version === 5) p += 2; // address_size, segment_selector_size
-    const headerLen = u32(p);
-    p += 4;
-    const minInstLen = dl[p];
-    const opcodeBase = dl[p + (version >= 4 ? 3 : 2) + 1 - 1]; // min_inst, max_ops(v4+), default_is_stmt, line_base, line_range, opcode_base
-    // layout: min_inst(1) [max_ops(1) v>=4] default_is_stmt(1) line_base(1,signed) line_range(1) opcode_base(1)
-    const maxOpsOffset = version >= 4 ? 1 : 0;
-    const lineRange = dl[p + 1 + maxOpsOffset + 2];
-    const lineBase = (dl[p + 1 + maxOpsOffset + 1] << 24) >> 24;
-    const opBase = dl[p + 1 + maxOpsOffset + 3];
-    const stdLens = [];
-    let q = p + 1 + maxOpsOffset + 4;
-    for (let i = 1; i < opBase; i++) stdLens.push(dl[q++]);
-    let program = p + headerLen; // program starts after header_length bytes
-    let address = 0;
-    const emit = () => addrs.push(address);
-    while (program < unitEnd) {
-      const op = dl[program++];
-      if (op === 0) {
-        // extended
-        let len; [len, program] = readLeb(dl, program);
-        const sub = dl[program];
-        if (sub === 2 /* DW_LNE_set_address */) {
-          address = u32(program + 1); // 4-byte addresses on wasm32
-        } else if (sub === 1 /* end_sequence */) {
-          emit();
-          address = 0;
-        }
-        program += len;
-      } else if (op < opBase) {
-        switch (op) {
-          case 1: emit(); break;                                   // copy
-          case 2: { let adv; [adv, program] = readLeb(dl, program); address += adv * minInstLen; break; } // advance_pc
-          case 3: { // advance_line (SLEB, skip)
-            while (dl[program++] & 0x80);
-            break;
-          }
-          case 8: { const adj = 255 - opBase; address += Math.floor(adj / lineRange) * minInstLen; break; } // const_add_pc
-          case 9: address += u16(program); program += 2; break;    // fixed_advance_pc
-          default: {
-            for (let i = 0; i < stdLens[op - 1]; i++) { let junk; [junk, program] = readLeb(dl, program); }
-          }
-        }
-      } else {
-        const adj = op - opBase;
-        address += Math.floor(adj / lineRange) * minInstLen;
-        emit();
-      }
-    }
-    at = unitEnd;
-    void lineBase; void opcodeBase;
-  }
-  return addrs;
+// DWARF rows must land on instruction boundaries in the same space. Excluded:
+// end_sequence rows (they point one past a sequence's last instruction), and
+// rows addressing code beyond this code section — a linked wasm keeps the line
+// programs of dead-stripped library code, whose addresses describe nothing here.
+// The debugger is unaffected by that tail: it only ever looks up a `pos`, and
+// every real `pos` is inside the section.
+const table = DwarfLineTable.fromWasm(wasm);
+if (table === null) {
+  throw new Error('no DWARF line table in the wasm');
 }
-
-const dwarfAddrs = decodeLineAddresses(sectionBytes('.debug_line'));
-console.log(`\n.debug_line: ${dwarfAddrs.length} rows decoded, addr range [${Math.min(...dwarfAddrs)}, ${Math.max(...dwarfAddrs)}]`);
-console.log('DWARF delta check (rows landing on instruction boundaries, excluding end_sequence rows):');
-for (const c of candidates) {
-  let hit = 0, miss = 0;
-  for (const a of dwarfAddrs) {
-    if (byAddr.has(a + c.delta)) hit++;
-    else miss++;
-  }
-  console.log(`  dwarfAddr + ${c.delta} (${c.name}): ${hit} on-boundary, ${miss} off`);
+const lastAddress = instructions[instructions.length - 1].address;
+const allRows = table.entries.filter((e) => !e.endSequence);
+const rows = allRows.filter((row) => row.address <= lastAddress);
+console.log(
+  `\n.debug_line: ${allRows.length} non-end_sequence rows, ${rows.length} of them within ` +
+    `the code section (<= ${lastAddress}); ${allRows.length - rows.length} describe stripped code`,
+);
+console.log('DWARF address convention (in-section rows landing on an instruction boundary at addr + delta):');
+for (const candidate of candidates) {
+  const onBoundary = rows.filter((row) => byAddress.has(row.address + candidate.delta)).length;
+  const percent = rows.length === 0 ? 0 : Math.round((onBoundary / rows.length) * 100);
+  console.log(
+    `  ${candidate.name} (delta ${candidate.delta}): ${onBoundary}/${rows.length} on-boundary (${percent}%)`,
+  );
 }
-console.log('\n(end_sequence rows point one-past-the-last-instruction, so a small "off" count is expected;');
-console.log(' the correct delta is the one with the overwhelming majority on-boundary.)');
+console.log('\nThe correct convention is the one with the overwhelming majority on-boundary.');

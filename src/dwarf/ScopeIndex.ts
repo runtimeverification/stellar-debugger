@@ -2,14 +2,14 @@
  * Maps a current PC (a validated `.debug_info` code offset) to its enclosing
  * function and the Rust variables/parameters in scope there.
  *
- * Built over the DIE trees produced by `parseDebugInfo` (M2), it records every
+ * Built over the DIE trees produced by `parseDebugInfo`, it records every
  * `DW_TAG_subprogram` that carries a code range — either a contiguous
  * `[low_pc, low_pc + high_pc)` (on this target `DW_AT_high_pc` is a SIZE, read as
  * a uint) or a `DW_AT_ranges` rangelist into `.debug_ranges`. Contiguous
  * functions are kept sorted by `low_pc` for binary search; the rare rangelist
  * functions are checked linearly.
  *
- * `variablesInScope` yields the raw material the value layer (M6+) needs: each
+ * `variablesInScope` yields the raw material the value layer needs: each
  * variable's type ref, its location (an inline exprloc OR a `.debug_loc`
  * offset), and the enclosing subprogram's frame-base expression. Nested
  * `DW_TAG_lexical_block` scopes are entered only when their own range covers the

@@ -7,7 +7,7 @@
  *
  * Addresses are CODE OFFSETS — relative to the code section's payload — which
  * on this target is the same space as komet-node's `pos` and as the DWARF
- * addresses themselves (M0 ground truth: no delta).
+ * addresses themselves: no delta (verified by scripts/verify-addresses.mjs).
  *
  * Absent debug sections are the `null` case; malformed DWARF throws
  * DwarfParseError — the caller decides whether to degrade.

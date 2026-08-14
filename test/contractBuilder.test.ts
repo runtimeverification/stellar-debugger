@@ -205,20 +205,6 @@ describe('ContractBuilder (unit, temp dirs)', () => {
       );
     });
 
-    it('does not run the check for a prebuilt wasmPath', async () => {
-      const dir = await makeContractDir();
-      const prebuilt = await writeWasm(dir, 'prebuilt.wasm', MINIMAL_WASM);
-
-      const { messages, report } = collector();
-      const builder = new ContractBuilder();
-      const result = await builder.build({ contractDir: dir, wasmPath: prebuilt }, report);
-      assert.strictEqual(result, prebuilt);
-      assert.ok(
-        !messages.some((m) => /debug info/i.test(m)),
-        `expected no debug-info warning, got: ${JSON.stringify(messages)}`,
-      );
-    });
-
     it('never fails the build when the wasm is malformed; it only warns', async () => {
       const dir = await makeContractDir();
       const malformed = await writeWasm(

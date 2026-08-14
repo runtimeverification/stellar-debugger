@@ -26,7 +26,7 @@ const ADDER_TRACE = path.join(FIXTURES, 'adder-debug.trace.jsonl');
 
 // --- Tiny constructors for hand-built in-memory DIEs and their attributes. ---
 // As in the TypeRegistry tests, the synthetic cases build `Die` literals directly
-// (the shape M2's parseDebugInfo produces). ScopeIndex walks `info.units[i].die`,
+// (the shape parseDebugInfo produces). ScopeIndex walks `info.units[i].die`,
 // so we also wrap the roots into a `DebugInfo` with a global dieByOffset map.
 
 const uint = (value: number): AttrValue => ({ kind: 'uint', value });

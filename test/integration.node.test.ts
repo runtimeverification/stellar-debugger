@@ -9,7 +9,7 @@
  * FAILS LOUDLY rather than skipping silently — set KOMET_NODE_E2E=0 to opt out
  * only where the node genuinely cannot be installed.
  *
- * Drives the full TurnkeyPipeline (spawn node -> seed -> deploy -> invoke with
+ * Drives the full LiveBackend pipeline (spawn node -> seed -> deploy -> invoke with
  * trace) for `add(5, 6)` and `increment(5)`, asserting a real trace comes back,
  * carries the current record shape, and replays.
  */
@@ -17,7 +17,7 @@
 import * as assert from 'assert';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
-import { TurnkeyPipeline } from '../src/pipeline/TurnkeyPipeline';
+import { LiveBackend } from '../src/debugAdapter/backends/LiveBackend';
 import { SorobanLaunchArgs } from '../src/debugAdapter/types';
 import { MemoryImage } from '../src/debugAdapter/MemoryImage';
 import { makeRuntimeState } from '../src/debugAdapter/runtimeState';
@@ -44,7 +44,7 @@ function nodeConfig() {
   };
 }
 
-describe('TurnkeyPipeline (real komet-node)', function () {
+describe('LiveBackend (real komet-node)', function () {
   this.timeout(180_000);
 
   before(function () {
@@ -68,9 +68,9 @@ describe('TurnkeyPipeline (real komet-node)', function () {
   });
 
   it('spawns the node, deploys, and traces add(5, 6)', async () => {
-    const pipeline = new TurnkeyPipeline();
+    const pipeline = new LiveBackend();
     try {
-      const resolved = await pipeline.run(
+      const resolved = await pipeline.resolve(
         {
           transactions: [
             { kind: 'deploy', id: 'c', wasm: WASM },
@@ -118,9 +118,9 @@ describe('TurnkeyPipeline (real komet-node)', function () {
   // that memory. The DWARF wasm is uploaded debug-STRIPPED (perf fix), so this completes
   // in well under the timeout despite the contract's size.
   it('traces increment(5) live and inspects the memory-backed `by: u32 == 5`', async () => {
-    const pipeline = new TurnkeyPipeline();
+    const pipeline = new LiveBackend();
     try {
-      const resolved = await pipeline.run(
+      const resolved = await pipeline.resolve(
         {
           transactions: [
             { kind: 'deploy', id: 'c', wasm: INCREMENT_WASM },

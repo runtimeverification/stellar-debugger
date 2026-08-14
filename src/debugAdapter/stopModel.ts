@@ -3,10 +3,10 @@
  *
  * `buildStopModel` is the single source of truth for a trace's stop points, so
  * the IDE (SorobanDebugSession) and the CLI can never disagree about where a
- * "stop" is. It derives, exactly as SorobanDebugSession.launchRequest did
- * inline, the validated-position → indices map, the visible record indices, the
- * per-record call depths, the raw line-run starts, the statement-granularity
- * run starts (post S17/S18), and the first/last stop points.
+ * "stop" is. From a resolved trace it derives the validated-position → indices
+ * map, the visible record indices, the per-record call depths, the raw line-run
+ * starts, the statement-granularity run starts (post S17/S18), and the
+ * first/last stop points. `replayCursor.ts` then does all its stepping within it.
  *
  * `pcAtIndex` is the current-PC rule the session uses: the validated code
  * offset at `index`, or the nearest EARLIER record that has one, else null.
@@ -41,8 +41,7 @@ export interface StopModel {
 }
 
 /**
- * Derive the trace's stop model from a resolved trace, reproducing exactly the
- * inline computation SorobanDebugSession.launchRequest performed.
+ * Derive the trace's stop model from a resolved trace.
  *
  * `opts.justMyCode` (default true, S21) restricts the statement-granularity
  * stop set to workspace source, dropping stops that rest in Rust toolchain or

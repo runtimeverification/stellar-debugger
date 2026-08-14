@@ -15,7 +15,7 @@ const WITH_WASM = { rawTrace: ADDER_TRACE, wasmPath: ADDER_WASM };
 const NO_WASM = { rawTrace: ADDER_TRACE };
 const THREAD = { threadId: 1 };
 
-describe('SorobanDebugSession source-level Variables view (M9)', () => {
+describe('SorobanDebugSession source-level Variables view', () => {
   let dc: DebugClient;
 
   beforeEach(async () => {
@@ -98,7 +98,7 @@ describe('SorobanDebugSession source-level Variables view (M9)', () => {
   it('shows no Variables scope without DWARF, exactly [Locals, Value Stack] (regression guard)', async () => {
     await launchAndStop(NO_WASM);
     // NullVariableResolver reports no functions -> the Variables scope is never
-    // prepended, so the scope list is unchanged from the pre-M9 behaviour.
+    // prepended, so a trace without DWARF sees exactly [Locals, Value Stack].
     const names = (await topScopes()).map((s) => s.name);
     assert.deepStrictEqual(names, ['Locals', 'Value Stack']);
   });
@@ -112,7 +112,7 @@ describe('SorobanDebugSession source-level Variables view (M9)', () => {
     const arg0 = res.body.variables.find((v) => v.name === 'arg_0');
     assert.ok(arg0, 'expected the arg_0 parameter');
     // A scalar Soroban `Val` has no expandable children, so its reference is 0
-    // (not expandable). Struct/enum child expansion is validated by the M6/M8
+    // (not expandable). Struct/enum child expansion is validated by the
     // ValueDecoder unit tests; full memory-backed expansion in the DAP session
     // awaits the komet-node memory trace and is not exercised here.
     assert.strictEqual(arg0!.variablesReference, 0);

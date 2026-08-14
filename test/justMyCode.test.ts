@@ -1,7 +1,7 @@
 /**
- * Red anchor for "just my code" statement stepping (docs/stepping.md rule S21).
+ * Unit suite for "just my code" statement stepping (docs/stepping.md rule S21).
  *
- * S21 adds a launch option `justMyCode` (default true) that drops
+ * S21 is a launch option `justMyCode` (default true) that drops
  * statement-granularity stop points whose mapped source file is NON-workspace
  * (Rust toolchain std/core + crates.io dependency sources), so source stepping
  * rests only in the user's own code. A path is workspace unless its normalized
@@ -10,8 +10,7 @@
  * same non-emptiness safety as S17/S18 applies: if every statement stop is
  * non-workspace, the unfiltered statement stops stand.
  *
- * This exercises the pure API the implementer WILL add and does not exist yet,
- * so the file is expected to be RED:
+ * The pure API under test:
  *   - src/debugAdapter/stops.ts: isWorkspaceSource, myCodeStops
  *   - src/debugAdapter/stopModel.ts: buildStopModel's optional { justMyCode } opt
  */

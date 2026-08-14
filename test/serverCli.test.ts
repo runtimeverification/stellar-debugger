@@ -1,6 +1,6 @@
 /**
  * Unit suite for the pure argv parser behind the DAP TCP server CLI
- * (`soroban-dap`), milestone M3 (CLI devex: --help + argument validation).
+ * (`soroban-dap`): --help and argument validation.
  *
  *   parseServerArgs(argv): ServerParse   from src/server/cliArgs.ts
  *   SERVER_USAGE: string                 the help text
@@ -9,8 +9,6 @@
  * exits. It maps a raw argv slice onto a discriminated union describing what
  * the (coverage-excluded) main.ts shell should do: show help, report a usage
  * error, or run with a host/port.
- *
- * This module does not exist yet, so this is the red anchor for it.
  */
 
 import * as assert from 'assert';
@@ -34,7 +32,7 @@ function asHelp(p: ServerParse): string {
   return (p as Extract<ServerParse, { kind: 'help' }>).text;
 }
 
-describe('parseServerArgs (M3 CLI devex)', () => {
+describe('parseServerArgs', () => {
   describe('help', () => {
     it('--help → kind "help" with the usage text', () => {
       const text = asHelp(parseServerArgs(['--help']));

@@ -118,9 +118,25 @@ const DEFAULT_MAX_DEPTH = 3;
 const DEFAULT_MAX_CHILDREN = 64;
 const DEFAULT_MAX_NODES = 1500;
 
-/** Mutable per-call node counter so a per-stop budget stays isolated. */
-interface NodeCounter {
-  count: number;
+/**
+ * One stop's expansion budget plus its running node count. Built fresh per stop,
+ * so the node cap bounds a single stop's projection rather than the whole run.
+ */
+interface Expansion {
+  maxDepth: number;
+  maxChildren: number;
+  maxNodes: number;
+  /** Nodes materialized so far; mutated as the walk proceeds. */
+  nodes: number;
+}
+
+function expansionFor(opts: ProjectOpts | undefined): Expansion {
+  return {
+    maxDepth: opts?.maxDepth ?? DEFAULT_MAX_DEPTH,
+    maxChildren: opts?.maxChildren ?? DEFAULT_MAX_CHILDREN,
+    maxNodes: opts?.maxNodes ?? DEFAULT_MAX_NODES,
+    nodes: 0,
+  };
 }
 
 /**
@@ -130,47 +146,30 @@ interface NodeCounter {
 function expandDecoded(
   name: string,
   decoded: DecodedValue,
-  depth: number,
-  maxDepth: number,
-  maxChildren: number,
-  maxNodes: number,
-  counter: NodeCounter,
+  budget: Expansion,
+  depth = 0,
 ): TraceVar {
   const node: TraceVar = { name, type: decoded.typeName ?? '', value: decoded.display };
-
-  if (typeof decoded.children === 'function') {
-    if (depth >= maxDepth || counter.count >= maxNodes) {
-      node.truncated = true;
-      return node;
-    }
-    const rawChildren = decoded.children();
-    if (rawChildren.length === 0) {
-      // Genuinely empty — omit the `children` key entirely.
-      return node;
-    }
-    const children: TraceVar[] = [];
-    const limit = Math.min(rawChildren.length, maxChildren);
-    for (let i = 0; i < limit; i++) {
-      counter.count++;
-      const child = rawChildren[i];
-      children.push(
-        expandDecoded(
-          child.name,
-          child.value,
-          depth + 1,
-          maxDepth,
-          maxChildren,
-          maxNodes,
-          counter,
-        ),
-      );
-    }
-    if (rawChildren.length > maxChildren) {
-      children.push({ name: '…', type: '', value: '…', truncated: true });
-    }
-    node.children = children;
+  if (typeof decoded.children !== 'function') {
+    return node;
   }
-
+  if (depth >= budget.maxDepth || budget.nodes >= budget.maxNodes) {
+    node.truncated = true;
+    return node;
+  }
+  const children = decoded.children();
+  if (children.length === 0) {
+    // Genuinely empty — omit the `children` key entirely.
+    return node;
+  }
+  const shown = children.slice(0, budget.maxChildren).map((child) => {
+    budget.nodes++;
+    return expandDecoded(child.name, child.value, budget, depth + 1);
+  });
+  if (children.length > budget.maxChildren) {
+    shown.push({ name: '…', type: '', value: '…', truncated: true });
+  }
+  node.children = shown;
   return node;
 }
 
@@ -184,10 +183,6 @@ export function projectSourceStop(
   index: number,
   opts?: ProjectOpts,
 ): SourceStop {
-  const maxDepth = opts?.maxDepth ?? DEFAULT_MAX_DEPTH;
-  const maxChildren = opts?.maxChildren ?? DEFAULT_MAX_CHILDREN;
-  const maxNodes = opts?.maxNodes ?? DEFAULT_MAX_NODES;
-
   const record = resolved.model.records[index];
 
   const mapped = resolved.source.locationForIndex(index);
@@ -205,14 +200,11 @@ export function projectSourceStop(
 
   const variables: TraceVar[] = [];
   if (pc !== null && resolved.variables.hasVariables()) {
-    const memory = resolved.model.memory;
-    const state = makeRuntimeState(record, memory, index);
-    const counter: NodeCounter = { count: 0 };
+    const state = makeRuntimeState(record, resolved.model.memory, index);
+    const budget = expansionFor(opts);
     for (const v of resolved.variables.variablesInScope(pc)) {
       const decoded = resolved.variables.decodeVariable(v, state, pc);
-      variables.push(
-        expandDecoded(v.name ?? '<anon>', decoded, 0, maxDepth, maxChildren, maxNodes, counter),
-      );
+      variables.push(expandDecoded(v.name ?? '<anon>', decoded, budget));
     }
   }
 

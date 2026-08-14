@@ -73,6 +73,13 @@ export interface ResolvedTrace {
 }
 
 /**
+ * Everything a `ResolvedTrace` needs beyond the trace itself — i.e. what
+ * `buildDebugArtifacts` derives from the contract wasm. A backend that has wasm
+ * in hand builds its result as `{ model, ...artifacts }`.
+ */
+export type DebugArtifacts = Omit<ResolvedTrace, 'model'>;
+
+/**
  * A SessionBackend turns launch arguments into a replayable trace. Different
  * backends implement different acquisition strategies (replay a file, attach to
  * a running node, or the full turnkey build+deploy+trace pipeline) behind one

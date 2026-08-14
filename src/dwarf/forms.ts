@@ -6,7 +6,7 @@
  * to stay aligned after every attribute, whether the value is usable or not. The
  * parity holds for this target's 4-byte address size; `readForm` supports only
  * 1/2/4-byte fixed integers, so a hypothetical 8-byte-address CU would be rejected
- * by `readUint` (whereas `skipByForm` would skip it) — out of scope for M1/M2.
+ * by `readUint` (whereas `skipByForm` would skip it).
  *
  * Forms that cannot be resolved offline (strx*, addrx*, sup, ref_sig8, the
  * indexed x-forms) still consume their bytes and return `{ kind: 'unavailable' }`.
@@ -145,7 +145,8 @@ function readUint(cursor: Cursor, size: number): number {
 
 /**
  * Reads an 8-byte little-endian value as `low + high * 2^32`. Values above
- * 2^53 lose precision; acceptable for M1, where 8-byte attributes are rare.
+ * 2^53 lose precision, which is tolerable: 8-byte attributes are rare on this
+ * target and none of them is a value the debugger reads exactly.
  */
 function readU64AsNumber(cursor: Cursor): number {
   const low = cursor.u32();

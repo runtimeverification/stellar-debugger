@@ -1,5 +1,5 @@
 /**
- * M2 acceptance tests: spec-driven arg encoding + `${...}` substitution.
+ * Spec-driven arg encoding + `${...}` substitution.
  *
  * Two pure, IO-free concerns (aside from reading the committed wasm fixture off
  * disk — no network, no komet-node):
@@ -30,7 +30,7 @@ const COMPOSITE_WASM = path.join(__dirname, '..', '..', 'test', 'fixtures', 'com
 // (no `Keypair.random()`), with no network access.
 const ADDRESS = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 7)).publicKey();
 
-describe('M2 specEncode', () => {
+describe('specEncode', () => {
   let wasm: Buffer;
 
   before(() => {

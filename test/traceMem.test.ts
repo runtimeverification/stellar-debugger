@@ -133,7 +133,7 @@ describe('trace parsing — mem sparse snapshot (hex) + globals (PA4)', () => {
   });
 
   it('parses globals when present and leaves them undefined when absent (optional)', () => {
-    // globals is unchanged from M7: Record<string, [wasmType, value]>.
+    // globals keeps its own shape: Record<string, [wasmType, value]>.
     const withGlobals = toTraceRecord(
       { kind: 'instr',
         pos: 1,
