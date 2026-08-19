@@ -63,6 +63,15 @@ describe('SorobanDebugSession (DAP replay)', () => {
     return bpResponse;
   }
 
+  /**
+   * Assert where the replay cursor is. C8: the position in the recording is
+   * reported in the THREAD's name (`soroban-vm [29/40]`), not in a frame label —
+   * a frame name states what the program is doing.
+   */
+  async function assertAt(index: number): Promise<void> {
+    assert.strictEqual(await cursorIndex(), index, 'unexpected replay cursor position');
+  }
+
   async function topFrame(): Promise<DebugProtocol.StackFrame> {
     const res = await dc.stackTraceRequest(THREAD);
     assert.ok(res.body.stackFrames.length >= 1, 'expected at least one stack frame');
@@ -75,6 +84,15 @@ describe('SorobanDebugSession (DAP replay)', () => {
     assert.strictEqual((stopped as DebugProtocol.StoppedEvent).body.reason, reason);
   }
 
+  /** The replay cursor's trace index, read off the thread label (C8). */
+  async function cursorIndex(): Promise<number> {
+    const threads = await dc.threadsRequest();
+    const name = threads.body.threads[0].name;
+    const probe = /\[(\d+)\/\d+\]$/.exec(name);
+    assert.ok(probe, `thread name carries no cursor probe: ${name}`);
+    return Number(probe[1]);
+  }
+
   /**
    * Walk backward at instruction granularity until the cursor clamps at the
    * first visible record, returning the top frame there. Statement-stop
@@ -84,14 +102,14 @@ describe('SorobanDebugSession (DAP replay)', () => {
    */
   async function rewindToFirstVisible(): Promise<DebugProtocol.StackFrame> {
     const INSTR = { ...THREAD, granularity: 'instruction' as const };
-    let prev = '';
-    let frame = await topFrame();
-    while (frame.name !== prev) {
-      prev = frame.name;
+    let prev = -1;
+    let index = await cursorIndex();
+    while (index !== prev) {
+      prev = index;
       await stopAfter(dc.stepBackRequest(INSTR), 'step');
-      frame = await topFrame();
+      index = await cursorIndex();
     }
-    return frame;
+    return topFrame();
   }
 
   it('advertises reverse debugging and stepping granularity', async () => {
@@ -152,7 +170,7 @@ describe('SorobanDebugSession (DAP replay)', () => {
       const frame = await topFrame();
       assert.ok(frame.source?.path?.endsWith(LIB_RS_SUFFIX), `unexpected source: ${frame.source?.path}`);
       assert.strictEqual(frame.line, 16);
-      assert.ok(frame.name.includes('[29/40]'), `unexpected frame name: ${frame.name}`);
+      await assertAt(29);
       assert.strictEqual(frame.instructionPointerReference, '0x2d');
     });
 
@@ -182,7 +200,7 @@ describe('SorobanDebugSession (DAP replay)', () => {
       let frame = await topFrame();
       assert.ok(frame.source?.path?.endsWith(LIB_RS_SUFFIX), `unexpected source: ${frame.source?.path}`);
       assert.strictEqual(frame.line, 16);
-      assert.ok(frame.name.includes('[29/40]'), `unexpected frame name: ${frame.name}`);
+      await assertAt(29);
 
       // (A forward statement next here would exhaust the single stop and END the
       // session under S20 — see the dedicated S20 test below — so it is omitted
@@ -194,7 +212,7 @@ describe('SorobanDebugSession (DAP replay)', () => {
       await stopAfter(dc.reverseContinueRequest(THREAD), 'breakpoint');
       frame = await topFrame();
       assert.strictEqual(frame.line, 16);
-      assert.ok(frame.name.includes('[29/40]'), `unexpected frame name: ${frame.name}`);
+      await assertAt(29);
     });
 
     it('S12/S13: a breakpoint on the S17-dropped #[contractimpl] line still resolves and fires at its run starts', async () => {
@@ -220,12 +238,12 @@ describe('SorobanDebugSession (DAP replay)', () => {
         frame.source?.path?.endsWith(LIB_RS_SUFFIX),
         `unexpected source: ${frame.source?.path}`,
       );
-      assert.ok(frame.name.includes('[6/40]'), `unexpected frame name: ${frame.name}`);
+      await assertAt(6);
 
       await stopAfter(dc.continueRequest(THREAD), 'breakpoint');
       frame = await topFrame();
       assert.strictEqual(frame.line, 12);
-      assert.ok(frame.name.includes('[40/40]'), `unexpected frame name: ${frame.name}`);
+      await assertAt(40);
     });
 
     it('S20: default-granularity next past the single statement stop terminates', async () => {
@@ -249,13 +267,12 @@ describe('SorobanDebugSession (DAP replay)', () => {
       await launchAndStop(WITH_WASM);
       // Rewind to the first visible record (6) before pinning the head sequence
       // — the statement entry now lands on record 29 (S17).
-      const entry = await rewindToFirstVisible();
-      assert.ok(entry.name.includes('[6/40]'), `unexpected head frame name: ${entry.name}`);
+      await rewindToFirstVisible();
+      await assertAt(6);
 
       await stopAfter(dc.stepInRequest({ ...THREAD, granularity: 'instruction' }), 'step');
       const frame = await topFrame();
-      assert.notStrictEqual(frame.name, entry.name);
-      assert.ok(frame.name.includes('[7/40]'), `unexpected frame name: ${frame.name}`);
+      await assertAt(7);
       // Record 7 is still inside the lib.rs:12 run (S16).
       assert.strictEqual(frame.line, 12);
     });
@@ -276,12 +293,12 @@ describe('SorobanDebugSession (DAP replay)', () => {
 
       await stopAfter(dc.stepInRequest(THREAD), 'step');
       let frame = await topFrame();
-      assert.ok(frame.name.includes('[1/40]'), `unexpected frame name: ${frame.name}`);
+      await assertAt(1);
       assert.strictEqual(frame.source, undefined);
 
       await stopAfter(dc.stepBackRequest(THREAD), 'step');
       frame = await topFrame();
-      assert.ok(frame.name.includes('[0/40]'), `unexpected frame name: ${frame.name}`);
+      await assertAt(0);
     });
 
     it('exposes locals and value stack at the cursor', async () => {
@@ -461,7 +478,7 @@ describe('SorobanDebugSession (DAP replay)', () => {
           await stopAfter(dc.stepInRequest({ ...THREAD, granularity: 'instruction' }), 'step');
         }
         const frame = await topFrame();
-        assert.ok(frame.name.includes('[6/40]'), `unexpected frame name: ${frame.name}`);
+        await assertAt(6);
         assert.strictEqual(frame.instructionPointerReference, '0x5');
       });
     });
@@ -518,8 +535,7 @@ describe('SorobanDebugSession (DAP replay)', () => {
       // With only that (unverified) breakpoint set, continue settles on the
       // last statement stop (record 29, :16) — never the trailing shim records.
       await stopAfter(dc.continueRequest(THREAD), 'step');
-      const frame = await topFrame();
-      assert.ok(frame.name.includes('[29/40]'), `unexpected frame name: ${frame.name}`);
+      await assertAt(29);
     });
 
     it('triggers on the validated record at an address, not a raw global-init pos', async () => {
@@ -536,7 +552,7 @@ describe('SorobanDebugSession (DAP replay)', () => {
       await stopAfter(dc.continueRequest(THREAD), 'breakpoint');
       const frame = await topFrame();
       assert.strictEqual(frame.instructionPointerReference, '0xb');
-      assert.ok(frame.name.includes('[9/40]'), `unexpected frame name: ${frame.name}`);
+      await assertAt(9);
       // Function code maps to Rust; the global-init record has no source.
       assert.ok(
         frame.source?.path?.endsWith(LIB_RS_SUFFIX),
@@ -576,8 +592,7 @@ describe('SorobanDebugSession (DAP replay)', () => {
       // No breakpoints remain, so continue settles on the last statement stop
       // (record 29, :16) — never the trailing #[contractimpl] shim records.
       await stopAfter(dc.continueRequest(THREAD), 'step');
-      const frame = await topFrame();
-      assert.ok(frame.name.includes('[29/40]'), `unexpected frame name: ${frame.name}`);
+      await assertAt(29);
     });
 
     it('applies the offset field to the instruction reference', async () => {

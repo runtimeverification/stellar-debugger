@@ -39,6 +39,9 @@ function stopModel(opts: {
   return {
     validatedPosToIndices: opts.validatedPosToIndices ?? new Map(),
     visibleIndices,
+    // The cursor reads depths, never the frames they are projected from.
+    frames: depths.map((depth) => ({ fn: -1, depth, callSite: null, caller: null })),
+    ranges: [],
     depths,
     rawRunStarts: opts.rawRunStarts ?? runStarts,
     runStarts,
@@ -204,10 +207,12 @@ describe('resolveBreakpoints', () => {
       hasLineInfo: () => true,
       locationForIndex: (): MappedLocation | null => null,
       locationForAddress: (): MappedLocation | null => null,
+      locationForFile: (): MappedLocation | null => null,
       resolveBreakpoint: (): ResolvedBreakpoint | null => ({ line: 1, indices }),
       executedLines: () => [],
       lineKeyForIndex: () => null,
       sourceTextForIndex: () => null,
+      sourceTextAt: () => null,
     };
   }
 

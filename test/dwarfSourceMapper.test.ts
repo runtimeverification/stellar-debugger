@@ -322,6 +322,42 @@ describe('sourcemap/DwarfSourceMapper (adder debug fixture)', () => {
       `duplicate existence checks: ${calls.sort().join(', ')}`,
     );
   });
+
+  // A DWARF inlined call site is stated as a file/line pair rather than an
+  // address, and an outer frame's position comes from it (docs/callstack.md, C2).
+  describe('locationForFile (frame positions stated outside the line table)', () => {
+    it('normalizes an existing file and keeps a positive column', () => {
+      const loc = mapper.locationForFile(`${path.dirname(libRs)}/../src/lib.rs`, 12, 5);
+      assertLibRsLocation(loc, 12);
+      assert.strictEqual(loc!.column, 5);
+    });
+
+    it('omits a column DWARF states as 0 (unknown)', () => {
+      assert.strictEqual(mapper.locationForFile(libRs, 12, 0)?.column, undefined);
+      assert.strictEqual(mapper.locationForFile(libRs, 12)?.column, undefined);
+    });
+
+    it('is null for line 0 and for a file that is not on disk', () => {
+      // Line 0 is DWARF's "compiler-generated, no source line"; a file the user
+      // cannot open must not become a frame position either.
+      assert.strictEqual(mapper.locationForFile(libRs, 0), null);
+      assert.strictEqual(mapper.locationForFile('/nowhere/absent.rs', 3), null);
+    });
+  });
+
+  describe('sourceTextAt', () => {
+    it('reads any line of a file, agreeing with sourceTextForIndex', () => {
+      // Index 29 maps to lib.rs:16; asking for that file/line directly must give
+      // the same text a frame at that record would show (S19's input).
+      assert.strictEqual(mapper.sourceTextAt(libRs, 16), mapper.sourceTextForIndex(29));
+      assert.ok((mapper.sourceTextAt(libRs, 16) ?? '').includes('a + b'));
+    });
+
+    it('is null past the end of the file and for an unreadable one', () => {
+      assert.strictEqual(mapper.sourceTextAt(libRs, 100000), null);
+      assert.strictEqual(mapper.sourceTextAt('/nowhere/absent.rs', 1), null);
+    });
+  });
 });
 
 describe('sourcemap/NullSourceMapper', () => {
@@ -331,8 +367,11 @@ describe('sourcemap/NullSourceMapper', () => {
     assert.strictEqual(mapper.hasLineInfo(), false);
     assert.strictEqual(mapper.locationForIndex(0), null);
     assert.strictEqual(mapper.locationForAddress(0), null);
+    assert.strictEqual(mapper.locationForFile('/any/file.rs', 1), null);
     assert.strictEqual(mapper.lineKeyForIndex(0), null);
     assert.strictEqual(mapper.resolveBreakpoint('/any/file.rs', 1), null);
     assert.deepStrictEqual(mapper.executedLines('/any/file.rs', 1, 99), []);
+    assert.strictEqual(mapper.sourceTextForIndex(0), null);
+    assert.strictEqual(mapper.sourceTextAt('/any/file.rs', 1), null);
   });
 });

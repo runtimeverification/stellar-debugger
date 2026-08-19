@@ -81,7 +81,7 @@ JSONL to stdout:
 
 ```jsonl
 {"kind":"meta","function":"add","records":41,"stops":1,"hasDwarf":true}
-{"kind":"stop","step":0,"traceIndex":29,"depth":0,"pc":"0x2d","function":"invoke_raw_extern","instr":"i32.add","source":{"path":".../examples/adder/src/lib.rs","line":16,"column":9},"variables":[{"name":"arg_0","type":"Val","value":"17179869188"},{"name":"arg_1","type":"Val","value":"12884901892"}]}
+{"kind":"stop","step":0,"traceIndex":29,"depth":0,"pc":"0x2d","function":"invoke_raw_extern","frames":[{"level":0,"name":"add","kind":"inline","pc":"0x2d","source":{"path":".../examples/adder/src/lib.rs","line":16}},{"level":1,"name":"invoke_raw","kind":"inline","pc":"0x2d","source":{"path":".../examples/adder/src/lib.rs","line":12}},{"level":2,"name":"adder::__add::invoke_raw_extern","kind":"rust","pc":"0x2d","source":{"path":".../examples/adder/src/lib.rs","line":12}}],"instr":"i32.add","source":{"path":".../examples/adder/src/lib.rs","line":16,"column":9},"variables":[{"name":"arg_0","type":"Val","value":"17179869188"},{"name":"arg_1","type":"Val","value":"12884901892"}]}
 {"kind":"result","terminated":true}
 ```
 
@@ -90,6 +90,21 @@ Each `stop` carries the source location, the enclosing function, the call
 (aggregates expand into a nested `children` array, bounded by `--depth` /
 `--max-children`). The full `SourceStop` / `TraceVar` field reference is in
 [`trace-cli-internal.md`](./trace-cli-internal.md).
+
+### The call stack: `frames`
+
+`frames` is the whole call stack at that stop, innermost first — the same frames the editor's Callstack view shows, derived by the same shared code, so a script and a debug session never disagree about who called whom.
+Each frame states its `name`, its `pc`, where it stands (`source`), and which rung of the precision ladder placed it:
+
+| `kind` | meaning |
+| --- | --- |
+| `rust` | a wasm activation located by DWARF |
+| `inline` | a Rust frame the optimizer inlined into the activation below it |
+| `wasm` | an activation with no source-level identity (no DWARF at its pc) |
+| `contract` | a host-level contract invocation — a boundary marker, not a code position |
+
+An outer frame stands at the CALL it is suspended in, not at its own first line, and a frame the user did not write (Rust toolchain, a crates.io dependency, or any sourceless frame in a session that has line info) carries `"subtle": true`, so a consumer can fold the noise away without losing it.
+The example above is a build above opt-level 0, where `add` survives only as an inline frame inside the `#[contractimpl]` wrapper — the rules are specified in [`callstack.md`](./callstack.md).
 
 ### Machine state: `globals` and `ledger`
 

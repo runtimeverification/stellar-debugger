@@ -130,9 +130,9 @@ export function stripDebugSections(bytes: Uint8Array): Uint8Array {
 }
 
 /**
- * Reads a ULEB128 at `offset`; returns [value, offset after the ULEB].
- * Exported for cross-implementation agreement tests against the DWARF
- * `Cursor.uleb` decoder; not part of the public wasm API.
+ * Reads a ULEB128 at `offset`; returns [value, offset after the ULEB]. Used by
+ * the `name`-section reader (`names.ts`), and by cross-implementation agreement
+ * tests against the DWARF `Cursor.uleb` decoder.
  */
 export function readUleb(bytes: Uint8Array, offset: number): [number, number] {
   let value = 0;

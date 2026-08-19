@@ -22,6 +22,10 @@ export class NullSourceMapper implements SourceMapper {
     return null;
   }
 
+  locationForFile(_path: string, _line: number, _column?: number): MappedLocation | null {
+    return null;
+  }
+
   resolveBreakpoint(_path: string, _line: number): ResolvedBreakpoint | null {
     return null;
   }
@@ -35,6 +39,10 @@ export class NullSourceMapper implements SourceMapper {
   }
 
   sourceTextForIndex(_index: number): string | null {
+    return null;
+  }
+
+  sourceTextAt(_path: string, _line: number): string | null {
     return null;
   }
 }

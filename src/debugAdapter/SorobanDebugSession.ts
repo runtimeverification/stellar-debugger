@@ -29,13 +29,14 @@ import { DebugProtocol } from '@vscode/debugprotocol';
 import * as path from 'path';
 import { TraceModel } from './TraceModel';
 import { firstNonWhitespaceColumn } from './stops';
-import { StopModel, buildStopModel, pcAtIndex } from './stopModel';
+import { StopModel, buildStopModel } from './stopModel';
 import { Granularity, ReplayCursor, resolveBreakpoints } from './replayCursor';
 import { SourceMapper } from '../sourcemap/SourceMapper';
 import { VariableResolver, NullVariableResolver } from '../sourcemap/VariableResolver';
 import { Disassembly } from '../wasm/Disassembly';
 import { ResolvedTrace, SessionBackend, SorobanLaunchArgs } from './types';
-import { renderInstr } from '../komet/mnemonics';
+import { CallFrame, buildCallStack } from './callStack';
+import { TraceRecord } from '../komet/trace';
 import { disassemblyRows, formatAddress, parseAddress } from './disassemblyView';
 import { ledgerNodes, ledgerSnapshot } from './ledgerView';
 import { globalNodes, localNodes, stackNodes } from './wasmView';
@@ -43,10 +44,14 @@ import { makeRuntimeState } from './runtimeState';
 import { DecodedValue, ChildVar } from '../dwarf/ValueDecoder';
 
 const THREAD_ID = 1;
-const FRAME_ID = 1;
 
-/** Variable-reference handles for the fixed scopes we expose. */
-enum ScopeRef {
+/**
+ * The kinds of scope a frame can offer. A `variablesReference` encodes the kind
+ * TOGETHER with the frame it belongs to (see `scopeRef`), because every scope is
+ * now per-frame: selecting an outer frame must show that frame's state, not the
+ * innermost one's (docs/callstack.md, C7).
+ */
+enum ScopeKind {
   Locals = 1,
   Stack = 2,
   SourceVars = 3,
@@ -54,6 +59,28 @@ enum ScopeRef {
   Globals = 4,
   /** Stellar ledger state at the cursor (docs/state-inspection.md, L1–L15). */
   Ledger = 5,
+}
+
+/** How many scope kinds a frame's reference block reserves. */
+const SCOPES_PER_FRAME = 8;
+/** Frame ids are `FRAME_ID_BASE + level`, so frame 0 is a valid (non-zero) id. */
+const FRAME_ID_BASE = 1;
+/** Scope references live above every frame id, child handles above every scope. */
+const SCOPE_REF_BASE = 100_000;
+const CHILD_HANDLE_BASE = 1_000_000;
+
+/** The `variablesReference` naming scope `kind` of the frame at `level`. */
+function scopeRef(level: number, kind: ScopeKind): number {
+  return SCOPE_REF_BASE + level * SCOPES_PER_FRAME + kind;
+}
+
+/** Inverse of `scopeRef`, or null when the reference is not a scope. */
+function decodeScopeRef(reference: number): { level: number; kind: ScopeKind } | null {
+  if (reference < SCOPE_REF_BASE || reference >= CHILD_HANDLE_BASE) {
+    return null;
+  }
+  const offset = reference - SCOPE_REF_BASE;
+  return { level: Math.floor(offset / SCOPES_PER_FRAME), kind: offset % SCOPES_PER_FRAME };
 }
 
 export class SorobanDebugSession extends DebugSession {
@@ -64,13 +91,18 @@ export class SorobanDebugSession extends DebugSession {
    * concrete backend.
    */
   private backend: SessionBackend | ((args: SorobanLaunchArgs) => SessionBackend);
+  private resolved?: ResolvedTrace;
   private model?: TraceModel;
   private cursor?: ReplayCursor;
   private stops?: StopModel;
   private source?: SourceMapper;
   private disassembly?: Disassembly;
-  /** Per-record validated code offsets, parallel to the trace records. */
-  private positions: (number | null)[] = [];
+  /**
+   * The call stack at the current cursor, built once per stop: `stackTrace` and
+   * every following `scopes`/`variables` request must agree on what frame N is.
+   * Cleared whenever the cursor moves (see `reportStop`).
+   */
+  private frames?: CallFrame[];
 
   /** Resolves when the client has finished configuring (e.g. breakpoints). */
   private readonly configurationDone: Promise<void>;
@@ -86,11 +118,11 @@ export class SorobanDebugSession extends DebugSession {
   /** Source-level variable resolver (Null until a DWARF-bearing wasm loads). */
   private variables: VariableResolver = new NullVariableResolver();
   /**
-   * Handles for lazily-expanded variable children. High start avoids colliding
-   * with the fixed ScopeRef range; reset on every stop so refs are fresh per
-   * cursor position.
+   * Handles for lazily-expanded variable children. Starts above every frame id
+   * and per-frame scope reference; reset on every stop so refs are fresh per
+   * cursor position (DAP invalidates all references at a stop).
    */
-  private readonly childHandles = new Handles<() => ChildVar[]>(1000);
+  private readonly childHandles = new Handles<() => ChildVar[]>(CHILD_HANDLE_BASE);
 
   /**
    * Set once the per-connection backend has been disposed, so teardown is
@@ -149,11 +181,11 @@ export class SorobanDebugSession extends DebugSession {
     }
     try {
       const resolved: ResolvedTrace = await this.backend.resolve(args, (msg) => this.log(msg));
+      this.resolved = resolved;
       this.model = resolved.model;
       this.source = resolved.source;
       this.variables = resolved.variables;
       this.disassembly = resolved.disassembly;
-      this.positions = resolved.positions;
       this.stops = buildStopModel(resolved, { justMyCode: args.justMyCode });
       this.cursor = new ReplayCursor(this.model, this.stops);
 
@@ -176,7 +208,7 @@ export class SorobanDebugSession extends DebugSession {
 
       this.sendResponse(response);
       this.cursor.toEntry();
-      this.sendEvent(new StoppedEvent('entry', THREAD_ID));
+      this.reportStop('entry');
     } catch (e) {
       // sendErrorResponse surfaces only a one-line, non-copyable modal. Mirror
       // the full error (with stack) into the debug console first, so the details
@@ -278,67 +310,85 @@ export class SorobanDebugSession extends DebugSession {
 
   // --- Frames, disassembly, scopes --------------------------------------
 
+  /**
+   * The single VM thread. Its label carries the cursor's position in the
+   * recording — the one fact a time-travel session has and DAP's frame model
+   * does not, and which a client refreshes on every stop.
+   */
   protected threadsRequest(response: DebugProtocol.ThreadsResponse): void {
-    response.body = { threads: [new Thread(THREAD_ID, 'soroban-vm')] };
+    const position =
+      this.model && !this.model.isEmpty ? ` [${this.model.cursor}/${this.model.length - 1}]` : '';
+    response.body = { threads: [new Thread(THREAD_ID, `soroban-vm${position}`)] };
     this.sendResponse(response);
   }
 
+  /**
+   * The full call stack at the cursor (docs/callstack.md), innermost frame
+   * first, honoring the client's paging window. Every frame is selectable and
+   * carries its own source position and instruction pointer; a contract-boundary
+   * frame is reported as a `label` so clients render it as the marker it is.
+   */
   protected stackTraceRequest(
     response: DebugProtocol.StackTraceResponse,
-    _args: DebugProtocol.StackTraceArguments,
+    args: DebugProtocol.StackTraceArguments,
   ): void {
-    if (!this.model || !this.source) {
-      response.body = { stackFrames: [], totalFrames: 0 };
-      this.sendResponse(response);
-      return;
-    }
-
-    const index = this.model.cursor;
-    const loc = this.source.locationForIndex(index);
-    const frameName = `${renderInstr(this.model.current.instr)}  [${index}/${this.model.length - 1}]`;
-
-    // Unmapped records get no Source at all (and line 0): the client keeps
-    // showing the frame name instead of opening a wrong file. S19: a mapped
-    // frame reports the line's first non-whitespace column, not the arbitrary
-    // DWARF sub-expression column; fall back to the DWARF column when the line
-    // text is unavailable or all-whitespace.
-    const frame: DebugProtocol.StackFrame = loc
-      ? new StackFrame(
-          FRAME_ID,
-          frameName,
-          new Source(path.basename(loc.path), loc.path),
-          loc.line,
-          firstNonWhitespaceColumn(this.source.sourceTextForIndex(index)) ?? loc.column ?? 0,
-        )
-      : new StackFrame(FRAME_ID, frameName);
-    const reference = this.instructionPointerReference();
-    if (reference !== undefined) {
-      frame.instructionPointerReference = reference;
-    }
-    response.body = { stackFrames: [frame], totalFrames: 1 };
+    const frames = this.callFrames();
+    const start = args.startFrame ?? 0;
+    const end = args.levels && args.levels > 0 ? start + args.levels : frames.length;
+    response.body = {
+      stackFrames: frames.slice(start, end).map((frame) => this.toDapFrame(frame)),
+      totalFrames: frames.length,
+    };
     this.sendResponse(response);
   }
 
-  /**
-   * The current PC as a hex address, so the Disassembly View stays anchored on
-   * the last real instruction. Absent when no record at or before the cursor has
-   * a validated code offset (e.g. a trace opening with global initializers).
-   */
-  private instructionPointerReference(): string | undefined {
-    const pc = this.currentPc();
-    return pc === null ? undefined : formatAddress(pc);
+  /** The call stack at the cursor, built once per stop. */
+  private callFrames(): CallFrame[] {
+    if (this.frames === undefined) {
+      this.frames =
+        this.resolved && this.stops && !this.resolved.model.isEmpty
+          ? buildCallStack(
+              { resolved: this.resolved, frames: this.stops.frames, ranges: this.stops.ranges },
+              this.resolved.model.cursor,
+            )
+          : [];
+    }
+    return this.frames;
   }
 
   /**
-   * The current record's validated code offset, or — when it has none — that of
-   * the NEAREST earlier record that does, so in-scope variable lookup stays
-   * anchored on the last real instruction. Null when no record qualifies.
+   * One `CallFrame` as DAP. S19: a mapped frame reports its line's first
+   * non-whitespace column, not the arbitrary DWARF sub-expression column; the
+   * DWARF column is the fallback when the line text is unavailable or
+   * all-whitespace. An unmapped frame gets no Source at all (and line 0), so the
+   * client keeps showing the frame name instead of opening a wrong file.
    */
-  private currentPc(): number | null {
-    if (!this.model) {
-      return null;
+  private toDapFrame(frame: CallFrame): DebugProtocol.StackFrame {
+    const id = FRAME_ID_BASE + frame.level;
+    const loc = frame.source;
+    const dap: DebugProtocol.StackFrame = loc
+      ? new StackFrame(
+          id,
+          frame.name,
+          new Source(path.basename(loc.path), loc.path),
+          loc.line,
+          firstNonWhitespaceColumn(this.source?.sourceTextAt(loc.path, loc.line) ?? null) ??
+            loc.column ??
+            0,
+        )
+      : new StackFrame(id, frame.name);
+    if (frame.kind === 'contract') {
+      dap.presentationHint = 'label';
+    } else if (frame.subtle) {
+      dap.presentationHint = 'subtle';
+      if (dap.source) {
+        dap.source.presentationHint = 'deemphasize';
+      }
     }
-    return pcAtIndex(this.positions, this.model.cursor);
+    if (frame.pc !== null) {
+      dap.instructionPointerReference = formatAddress(frame.pc);
+    }
+    return dap;
   }
 
   protected disassembleRequest(
@@ -349,32 +399,54 @@ export class SorobanDebugSession extends DebugSession {
     this.sendResponse(response);
   }
 
+  /**
+   * The scopes of ONE frame (C7). Locals, Value Stack and Variables describe the
+   * selected frame — an outer frame reports the state at its own call
+   * instruction, not the innermost frame's. Globals and the Ledger are VM-wide,
+   * so every code frame offers them; a contract-boundary frame has no state of
+   * its own and offers nothing.
+   */
   protected scopesRequest(
     response: DebugProtocol.ScopesResponse,
-    _args: DebugProtocol.ScopesArguments,
+    args: DebugProtocol.ScopesArguments,
   ): void {
-    // Fresh child-expansion refs per stop: last cursor's handles are stale.
-    this.childHandles.reset();
+    const frame = this.frameById(args.frameId);
+    if (!frame || frame.kind === 'contract') {
+      response.body = { scopes: [] };
+      this.sendResponse(response);
+      return;
+    }
+    const level = frame.level;
     const scopes: Scope[] = [
-      new Scope('Locals', ScopeRef.Locals, false),
-      new Scope('Value Stack', ScopeRef.Stack, false),
+      new Scope('Locals', scopeRef(level, ScopeKind.Locals), false),
+      new Scope('Value Stack', scopeRef(level, ScopeKind.Stack), false),
     ];
     // The source-level Variables scope is offered only when the resolver has
     // DWARF functions; without it the list is exactly [Locals, Value Stack].
     if (this.variables.hasVariables()) {
-      scopes.unshift(new Scope('Variables', ScopeRef.SourceVars, false));
+      scopes.unshift(new Scope('Variables', scopeRef(level, ScopeKind.SourceVars), false));
     }
     // G4: globals appear only for a trace whose records carry them.
-    if (this.model?.current.globals !== undefined) {
-      scopes.push(new Scope('Globals', ScopeRef.Globals, false));
+    if (this.recordFor(frame)?.globals !== undefined) {
+      scopes.push(new Scope('Globals', scopeRef(level, ScopeKind.Globals), false));
     }
     // L14: the ledger appears only for a trace carrying ledger information —
     // never as an empty tree.
     if (this.model?.ledger.hasLedger()) {
-      scopes.push(new Scope('Ledger', ScopeRef.Ledger, false));
+      scopes.push(new Scope('Ledger', scopeRef(level, ScopeKind.Ledger), false));
     }
     response.body = { scopes };
     this.sendResponse(response);
+  }
+
+  /** The frame a client-supplied frame id refers to, or undefined. */
+  private frameById(frameId: number): CallFrame | undefined {
+    return this.callFrames()[frameId - FRAME_ID_BASE];
+  }
+
+  /** The trace record whose runtime state a frame reports, if it has one. */
+  private recordFor(frame: CallFrame): TraceRecord | undefined {
+    return frame.stateIndex === null ? undefined : this.model?.records[frame.stateIndex];
   }
 
   protected variablesRequest(
@@ -389,40 +461,52 @@ export class SorobanDebugSession extends DebugSession {
   }
 
   /**
-   * The nodes behind a variables reference: one of the fixed scopes, or a
-   * container previously handed out behind a child handle. Every scope — wasm
-   * locals, the ledger tree, decoded Rust values — arrives as `ChildVar`s, so
-   * they all reach DAP through `toDapVariable` and its lazy-children plumbing.
+   * The nodes behind a variables reference: a scope of some frame, or a container
+   * previously handed out behind a child handle. Every scope — wasm locals, the
+   * ledger tree, decoded Rust values — arrives as `ChildVar`s, so they all reach
+   * DAP through `toDapVariable` and its lazy-children plumbing.
    */
   private nodesFor(reference: number): ChildVar[] {
-    const record = this.model?.current;
-    switch (reference) {
-      case ScopeRef.Locals:
+    const scope = decodeScopeRef(reference);
+    if (scope === null) {
+      return this.expandChildHandle(reference);
+    }
+    const frame = this.callFrames()[scope.level];
+    if (!frame) {
+      return [];
+    }
+    const record = this.recordFor(frame);
+    switch (scope.kind) {
+      case ScopeKind.Locals:
         return record ? localNodes(record) : [];
-      case ScopeRef.Stack:
+      case ScopeKind.Stack:
         return record ? stackNodes(record) : [];
-      case ScopeRef.Globals:
+      case ScopeKind.Globals:
         return record ? globalNodes(record) : [];
-      case ScopeRef.SourceVars:
-        return this.sourceVarNodes();
-      case ScopeRef.Ledger:
+      case ScopeKind.SourceVars:
+        return this.sourceVarNodes(frame);
+      case ScopeKind.Ledger:
         return this.ledgerScopeNodes();
       default:
-        return this.expandChildHandle(reference);
+        return [];
     }
   }
 
   /**
-   * The in-scope DWARF variables at the current PC, each decoded against the
-   * folded runtime state at the cursor.
+   * A frame's own DWARF variables, decoded against that frame's runtime state:
+   * the register values the trace recorded where the frame stands (its own
+   * instruction, or the call it is suspended in), and linear memory as it is NOW
+   * — a callee may have written through a reference the caller still holds, and
+   * the caller's spilled locals live in that memory.
    */
-  private sourceVarNodes(): ChildVar[] {
-    const pc = this.currentPc();
-    if (!this.model || pc === null) {
+  private sourceVarNodes(frame: CallFrame): ChildVar[] {
+    const record = this.recordFor(frame);
+    const pc = frame.pc;
+    if (!this.model || !record || pc === null) {
       return [];
     }
-    const state = makeRuntimeState(this.model.current, this.model.memory, this.model.cursor);
-    return this.variables.variablesInScope(pc).map((v) => ({
+    const state = makeRuntimeState(record, this.model.memory, this.model.cursor);
+    return frame.variables.map((v) => ({
       name: v.name ?? '<anon>',
       value: this.variables.decodeVariable(v, state, pc),
     }));
@@ -516,7 +600,7 @@ export class SorobanDebugSession extends DebugSession {
     // S8/S10: reverse step over — the previous stop point not in a deeper frame.
     if (this.cursor) {
       this.cursor.stepBackward(granularityOf(args.granularity), this.cursor.depth);
-      this.sendEvent(new StoppedEvent('step', THREAD_ID));
+      this.reportStop('step');
     }
   }
 
@@ -536,9 +620,22 @@ export class SorobanDebugSession extends DebugSession {
       granularityOf(granularity),
       maxDepth(this.cursor.depth),
     );
-    this.sendEvent(
-      outcome === 'terminated' ? new TerminatedEvent() : new StoppedEvent('step', THREAD_ID),
-    );
+    if (outcome === 'terminated') {
+      this.sendEvent(new TerminatedEvent());
+    } else {
+      this.reportStop('step');
+    }
+  }
+
+  /**
+   * Report a stop. The cursor has moved, so everything derived from it is stale:
+   * the call stack is dropped (rebuilt on the next `stackTrace`) and the child
+   * handles are reset, which DAP already treats as invalidated at a stop.
+   */
+  private reportStop(reason: 'entry' | 'step' | 'breakpoint'): void {
+    this.frames = undefined;
+    this.childHandles.reset();
+    this.sendEvent(new StoppedEvent(reason, THREAD_ID));
   }
 
   /** Run to the next/previous breakpoint, or clamp to the trace's last/first stop. */
@@ -551,9 +648,7 @@ export class SorobanDebugSession extends DebugSession {
       direction === 'forward'
         ? this.cursor.runForward(breakpoints)
         : this.cursor.runBackward(breakpoints);
-    this.sendEvent(
-      new StoppedEvent(outcome === 'breakpoint' ? 'breakpoint' : 'step', THREAD_ID),
-    );
+    this.reportStop(outcome === 'breakpoint' ? 'breakpoint' : 'step');
   }
 
   // --- Teardown ---------------------------------------------------------

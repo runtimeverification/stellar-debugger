@@ -43,6 +43,12 @@ export interface SourceMapper {
   locationForIndex(index: number): MappedLocation | null;
   /** Rust location for a static code offset (disassembly rows), or null. */
   locationForAddress(codeOffset: number): MappedLocation | null;
+  /**
+   * A location stated OUTSIDE the line table — a DWARF inlined call site — put
+   * through the same usability policy as a mapped record: normalized, and null
+   * when the file is not on disk (docs/callstack.md, C2).
+   */
+  locationForFile(path: string, line: number, column?: number): MappedLocation | null;
   /** Resolve a breakpoint request to an executed line, or null when none. */
   resolveBreakpoint(path: string, line: number): ResolvedBreakpoint | null;
   /** Distinct executed lines in `path` within [fromLine, toLine], ascending. */
@@ -51,4 +57,6 @@ export interface SourceMapper {
   lineKeyForIndex(index: number): string | null;
   /** Raw source text of the line the record at `index` maps to, or null. */
   sourceTextForIndex(index: number): string | null;
+  /** Raw source text of an explicit file/line (any frame's position), or null. */
+  sourceTextAt(path: string, line: number): string | null;
 }

@@ -17,10 +17,19 @@ import * as path from 'path';
 
 import { TraceRecord, opcode } from '../komet/trace';
 
-/** A function body in code-offset space: [start, end). */
+/**
+ * A function body in code-offset space: [start, end). Call-depth reconstruction
+ * reads only the bounds; `index` and `name` are what a wasm-level call stack
+ * frame is labelled with (docs/callstack.md, C4) and are absent for a
+ * trace-derived disassembly, which knows no function structure at all.
+ */
 export interface FunctionRange {
   start: number;
   end: number;
+  /** Wasm function index (imports included in the numbering). */
+  index?: number;
+  /** Demangled name from the module's `name` section, when it has one. */
+  name?: string;
 }
 
 /** Opcodes that descend into a callee (may increase call depth). */
@@ -29,62 +38,108 @@ const CALL_OPCODES = new Set(['call', 'call_indirect', 'return_call', 'return_ca
 const RETURN_OPCODES = new Set(['return']);
 
 /**
- * Fallback call-depth reconstruction from call/return opcodes alone (used when
- * no function-body ranges exist, i.e. wasm-less replay). Depth is recorded at
- * instruction entry, so a `return` belongs to the frame it leaves. Implicit
- * returns are invisible to this walk — see computeDepths.
+ * One activation record of the reconstructed wasm frame stack — the physical
+ * call stack the debugger shows (docs/callstack.md, C1) and the same structure
+ * the stepping depth is read off (`computeDepths`), so the Callstack view and
+ * step-over/step-out can never disagree about what a frame is.
+ *
+ * Frames are IMMUTABLE and SHARED: the walk hands the same object to every
+ * record executing in that activation, and `caller` links it to the frame it
+ * returns into, so the whole trace's stacks cost one object per call.
  */
-export function opcodeDepths(records: readonly TraceRecord[]): number[] {
-  const depths = new Array<number>(records.length);
-  let depth = 0;
-  for (let i = 0; i < records.length; i++) {
-    depths[i] = depth;
-    const op = opcode(records[i]);
-    if (CALL_OPCODES.has(op)) {
-      depth++;
-    } else if (RETURN_OPCODES.has(op) && depth > 0) {
-      depth--;
-    }
-  }
-  return depths;
+export interface WasmFrame {
+  /** Index into the sorted function ranges; -1 when the pc is in no known body. */
+  fn: number;
+  /** Call depth, 0 = outermost. Equals `computeDepths()[i]` for this frame's records. */
+  depth: number;
+  /**
+   * Record index of the `call` that created this frame — i.e. the CALLER's
+   * position while this frame runs, which is what an outer stack frame reports.
+   * Null for the outermost frame and wherever the walk lost the call site.
+   */
+  callSite: number | null;
+  /** The frame this one returns into, or null at the outermost. */
+  caller: WasmFrame | null;
+}
+
+/** The per-record frame stacks of a trace, plus the ranges the walk indexed. */
+export interface FrameStacks {
+  /**
+   * Innermost frame per record (parallel to `records`); null only for records
+   * ahead of the first frame the walk could establish.
+   */
+  frames: (WasmFrame | null)[];
+  /** The function ranges `WasmFrame.fn` indexes, sorted by start; empty in the opcode fallback. */
+  ranges: readonly FunctionRange[];
 }
 
 /**
- * Call depth per trace record (spec Model/depth).
+ * Fallback frame reconstruction from call/return opcodes alone (used when no
+ * function-body ranges exist, i.e. wasm-less replay). Depth is recorded at
+ * instruction entry, so a `return` belongs to the frame it leaves. Implicit
+ * returns are invisible to this walk — see computeFrames. Frames carry no
+ * function identity here (`fn: -1`): without ranges there is nothing to name.
+ */
+function opcodeFrames(records: readonly TraceRecord[]): (WasmFrame | null)[] {
+  const frames = new Array<WasmFrame | null>(records.length);
+  let frame: WasmFrame = { fn: -1, depth: 0, callSite: null, caller: null };
+  for (let i = 0; i < records.length; i++) {
+    frames[i] = frame;
+    const op = opcode(records[i]);
+    if (CALL_OPCODES.has(op)) {
+      frame = { fn: -1, depth: frame.depth + 1, callSite: i, caller: frame };
+    } else if (RETURN_OPCODES.has(op) && frame.caller !== null) {
+      frame = frame.caller;
+    }
+  }
+  return frames;
+}
+
+/**
+ * Fallback call-depth reconstruction from call/return opcodes alone; see
+ * `opcodeFrames`, of which this is the depth projection.
+ */
+export function opcodeDepths(records: readonly TraceRecord[]): number[] {
+  return opcodeFrames(records).map((frame) => frame?.depth ?? 0);
+}
+
+/**
+ * The wasm frame stack per trace record (spec Model/depth, docs/callstack.md C1).
  *
- * With function-body ranges, depth follows a frame stack over the VISIBLE
- * records (validated `positions[i] !== null`): moving into a different
+ * With function-body ranges, the stack follows the function membership of the
+ * VISIBLE records (validated `positions[i] !== null`): moving into a different
  * function's body right after a call-class record pushes a frame; any other
  * transition pops back to that function's frame (matching implicit returns,
  * which produce no record) or, when the function is not on the stack at all,
- * replaces the current frame. Invisible records carry the depth of the
+ * replaces the current frame. Invisible records carry the frame of the
  * surrounding visible context. Without ranges (or with an empty list) the
  * opcode-based reconstruction is the fallback.
  */
-export function computeDepths(
+export function computeFrames(
   records: readonly TraceRecord[],
   positions: readonly (number | null)[],
   functionRanges?: readonly FunctionRange[],
-): number[] {
+): FrameStacks {
   if (!functionRanges || functionRanges.length === 0) {
-    return opcodeDepths(records);
+    return { frames: opcodeFrames(records), ranges: [] };
   }
   const ranges = [...functionRanges].sort((a, b) => a.start - b.start);
 
-  const depths = new Array<number>(records.length);
-  /** Frame stack of function identities (range indices; -1 = outside all bodies). */
-  const stack: number[] = [];
+  const frames = new Array<WasmFrame | null>(records.length);
+  /** Frame stack, outermost first; the last entry is the executing frame. */
+  const stack: WasmFrame[] = [];
   let prevVisible = -1;
   for (let i = 0; i < records.length; i++) {
     const pos = positions[i] ?? null;
     if (pos === null) {
-      depths[i] = Math.max(0, stack.length - 1);
+      frames[i] = stack[stack.length - 1] ?? null;
       continue;
     }
     const fn = functionIndexAt(ranges, pos);
-    if (stack.length === 0) {
-      stack.push(fn);
-    } else if (fn !== stack[stack.length - 1]) {
+    const top = stack[stack.length - 1];
+    if (top === undefined) {
+      stack.push({ fn, depth: 0, callSite: null, caller: null });
+    } else if (fn !== top.fn) {
       // A genuine call ENTRY lands on the callee body's first instruction right
       // after a call-class record; a return lands just after the caller's call
       // (never on a body's first instruction), so a call record alone does not
@@ -97,20 +152,46 @@ export function computeDepths(
         prevVisible >= 0 &&
         CALL_OPCODES.has(opcode(records[prevVisible]));
       if (isEntry) {
-        stack.push(fn);
+        stack.push({ fn, depth: stack.length, callSite: prevVisible, caller: top });
       } else {
-        const frame = stack.lastIndexOf(fn);
+        const frame = lastIndexOfFn(stack, fn);
         if (frame >= 0) {
           stack.length = frame + 1;
         } else {
-          stack[stack.length - 1] = fn;
+          // Execution surfaced in a function that is not on the stack at all:
+          // the identity changes but the activation (and its depth) does not.
+          stack[stack.length - 1] = { ...top, fn };
         }
       }
     }
-    depths[i] = stack.length - 1;
+    frames[i] = stack[stack.length - 1];
     prevVisible = i;
   }
-  return depths;
+  return { frames, ranges };
+}
+
+/** Topmost stack position holding function identity `fn`, or -1. */
+function lastIndexOfFn(stack: readonly WasmFrame[], fn: number): number {
+  for (let i = stack.length - 1; i >= 0; i--) {
+    if (stack[i].fn === fn) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Call depth per trace record (spec Model/depth) — the depth projection of
+ * `computeFrames`, which is where the reconstruction itself is documented.
+ */
+export function computeDepths(
+  records: readonly TraceRecord[],
+  positions: readonly (number | null)[],
+  functionRanges?: readonly FunctionRange[],
+): number[] {
+  return computeFrames(records, positions, functionRanges).frames.map(
+    (frame) => frame?.depth ?? 0,
+  );
 }
 
 /**

@@ -15,8 +15,10 @@
  */
 
 import {
+  FunctionRange,
+  WasmFrame,
   classifyLineRole,
-  computeDepths,
+  computeFrames,
   computeRunStarts,
   myCodeStops,
   statementStops,
@@ -28,7 +30,15 @@ export interface StopModel {
   validatedPosToIndices: Map<number, number[]>;
   /** Visible (validated-position) record indices, ascending. */
   visibleIndices: number[];
-  /** Call depth per record (parallel to records), via computeDepths. */
+  /**
+   * Innermost wasm frame per record, from `computeFrames` — the call stack the
+   * Callstack view is built from (docs/callstack.md, C1). Depth-only consumers
+   * read `depths`, which is this projected.
+   */
+  frames: (WasmFrame | null)[];
+  /** The function ranges `WasmFrame.fn` indexes, sorted by start. */
+  ranges: readonly FunctionRange[];
+  /** Call depth per record (parallel to records). */
   depths: number[];
   /** Raw line-run starts, pre-S17/S18 (for breakpoint narrowing). */
   rawRunStarts: number[];
@@ -69,7 +79,8 @@ export function buildStopModel(
     }
   });
 
-  const depths = computeDepths(model.records, positions, disassembly.functionRanges);
+  const { frames, ranges } = computeFrames(model.records, positions, disassembly.functionRanges);
+  const depths = frames.map((frame) => frame?.depth ?? 0);
   const rawRunStarts = computeRunStarts(positions, depths, (i) => source.lineKeyForIndex(i));
   const stmtStops = statementStops(rawRunStarts, depths, (i) =>
     classifyLineRole(source.sourceTextForIndex(i)),
@@ -88,6 +99,8 @@ export function buildStopModel(
   return {
     validatedPosToIndices,
     visibleIndices,
+    frames,
+    ranges,
     depths,
     rawRunStarts,
     runStarts,

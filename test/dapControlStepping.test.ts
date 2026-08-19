@@ -60,8 +60,10 @@ describe('Control-flow stepping (docs/stepping.md, DAP level)', () => {
     const res = await dc.stackTraceRequest(THREAD);
     assert.ok(res.body.stackFrames.length >= 1, 'expected at least one stack frame');
     const frame = res.body.stackFrames[0];
-    const probe = /\[(\d+)\/\d+\]$/.exec(frame.name);
-    assert.ok(probe, `frame name carries no trace-index probe: ${frame.name}`);
+    const threads = await dc.threadsRequest();
+    const label = threads.body.threads[0].name;
+    const probe = /\[(\d+)\/\d+\]$/.exec(label);
+    assert.ok(probe, `thread label carries no cursor probe: ${label}`);
     return { index: Number(probe[1]), line: frame.line, col: frame.column, path: frame.source?.path };
   }
 

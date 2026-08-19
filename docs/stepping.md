@@ -161,8 +161,11 @@ every stop, the unfiltered run starts stand.
 
 ### Frames
 
+The rules below govern where the INNERMOST frame stands.
+What the rest of the stack is — the wasm activations under it, the Rust frames inlining erased, the contract boundaries below them — is specified separately in [`callstack.md`](./callstack.md) (C1–C8), which builds on the same frame reconstruction `depth` is projected from.
+
 - **S16** (frame consistency): whenever the cursor rests on a mapped record,
-  the stack frame carries that record's source and line; the frame is
+  the innermost stack frame carries that record's source and line; the frame is
   sourceless only when the cursor legitimately rests on an unmapped stop point
   (instruction granularity, or no line info at all).
 - **S19** (line-start cursor): whenever the cursor rests on a mapped record, the

@@ -34,9 +34,26 @@ export interface LineEntry {
 export class DwarfLineTable {
   /** All entries from all units, sorted by address. */
   readonly entries: readonly LineEntry[];
+  /**
+   * Per line program (keyed by its `.debug_line` offset, i.e. a CU's
+   * DW_AT_stmt_list) the unit's resolved file table, indexable by file index.
+   * `.debug_info` states an inlined call site as such an index (docs/callstack.md,
+   * C2), and this is the only place the two tables can be joined.
+   */
+  private readonly filesByProgram: Map<number, string[]>;
 
-  private constructor(entries: LineEntry[]) {
+  private constructor(entries: LineEntry[], filesByProgram: Map<number, string[]>) {
     this.entries = entries;
+    this.filesByProgram = filesByProgram;
+  }
+
+  /**
+   * The path of `fileIndex` in the line program at `stmtListOffset` — the
+   * resolution DWARF's `DW_AT_call_file` needs. Undefined when either index is
+   * unknown to the table.
+   */
+  filePath(stmtListOffset: number, fileIndex: number): string | undefined {
+    return this.filesByProgram.get(stmtListOffset)?.[fileIndex];
   }
 
   /**
@@ -59,21 +76,24 @@ export class DwarfLineTable {
     const lineStr = parsed.customSection('.debug_line_str');
 
     const entries: LineEntry[] = [];
+    const filesByProgram = new Map<number, string[]>();
     const cus = scanCompilationUnits({ info, abbrev, str, lineStr });
-    const seenOffsets = new Set<number>();
     for (const cu of cus) {
-      if (cu.stmtListOffset === undefined || seenOffsets.has(cu.stmtListOffset)) {
+      if (cu.stmtListOffset === undefined || filesByProgram.has(cu.stmtListOffset)) {
         continue;
       }
-      seenOffsets.add(cu.stmtListOffset);
       const unit = parseLineProgram(debugLine, cu.stmtListOffset, { str, lineStr });
+      filesByProgram.set(
+        cu.stmtListOffset,
+        unit.files.map((_, index) => resolveFilePath(unit, cu, index)),
+      );
       collectEntries(unit, cu, entries);
     }
 
     // Sort by address; at equal addresses end_sequence rows come first so a
     // new sequence starting exactly where another ended wins the lookup.
     entries.sort((a, b) => a.address - b.address || Number(b.endSequence) - Number(a.endSequence));
-    return new DwarfLineTable(entries);
+    return new DwarfLineTable(entries, filesByProgram);
   }
 
   /**

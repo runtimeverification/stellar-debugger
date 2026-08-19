@@ -143,8 +143,11 @@ debugAdapter/
                         records, call depths, statement stops (shared with the CLI)
   replayCursor.ts       the stepping engine — every forward/reverse move and the
                         breakpoint resolution, as cursor moves over a StopModel
-  stops.ts              the pure derivations stopModel is built from (depths,
-                        line runs, S17/S18/S21 stop filtering)
+  stops.ts              the pure derivations stopModel is built from (wasm frame
+                        stacks + depths, line runs, S17/S18/S21 stop filtering)
+  callStack.ts          the frames both front ends show: wasm activations, the
+                        Rust frames inlining erased, contract boundaries
+                        (docs/callstack.md)
   TraceModel            records + replay cursor; owns the two state images below,
                         built lazily and shared by every consumer
   MemoryImage           linear memory at a cursor (snapshot-on-change index)
@@ -181,17 +184,21 @@ soroban/strkey.ts       raw address bytes -> C…/G… strkey (SDK-free: the SDK
                         the DAP handshake)
 wasm/
   sections.ts           wasm section walker (offsets, custom-section lookup)
+  names.ts              the `name` section + Rust demangling: how a frame is
+                        labelled when the build carries no DWARF
   Disassembly.ts        static disassembly (wasmparser), code-offset addressed
 dwarf/                  DWARF v4/v5 .debug_line/.debug_info parser -> LineTable
 sourcemap/
   SourceMapper          the mapping seam the adapter talks to
   DwarfSourceMapper     trace index / code offset -> Rust file:line (+ breakpoints)
   NullSourceMapper      no-DWARF fallback (disassembly-only)
+  VariableResolver      the source-level view of a pc: enclosing function, inlined
+                        frames, in-scope variables, decoded values
 ```
 
 All replay logic is free of the `vscode` API, so it can be unit-tested in plain
 Node; the `vscode`-only glue lives in `extension.ts`. For a deep dive on the
-stepping model, see [`docs/stepping.md`](docs/stepping.md).
+stepping model, see [`docs/stepping.md`](docs/stepping.md); for the frame model behind the Callstack view, see [`docs/callstack.md`](docs/callstack.md).
 
 ## Pull requests
 

@@ -151,6 +151,10 @@ class StubSourceMapper implements SourceMapper {
     return null;
   }
 
+  locationForFile(): MappedLocation | null {
+    return null;
+  }
+
   resolveBreakpoint(): ResolvedBreakpoint | null {
     return null;
   }
@@ -170,6 +174,10 @@ class StubSourceMapper implements SourceMapper {
   sourceTextForIndex(index: number): string | null {
     const info = this.infos[index];
     return info ? info.text : null;
+  }
+
+  sourceTextAt(): string | null {
+    return null;
   }
 }
 

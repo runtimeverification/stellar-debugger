@@ -14,6 +14,7 @@ directions.
   your actual `.rs` files — not opaque bytecode.
 - ⏪ **Step backward.** Step back and reverse-continue as easily as going
   forward. Overshot the bug? Just step back. Backward stepping is instant.
+- 🧭 **Follow the call stack.** Every Rust frame that led to the current line, including the ones the optimizer inlined away — select any frame to inspect *its* variables and jump to *its* line.
 - 🔎 **Inspect state at every step.** See the values in play at the current
   point of execution — your Rust variables, the wasm locals, stack and globals.
 - 🏦 **See the ledger, not just the code.** Contract storage (instance,
@@ -136,7 +137,6 @@ internally.
 
 ## Roadmap
 
-- Multi-frame call stacks with per-frame locals
 - A source-level Variables view with inline values
 - Column-level breakpoints
 

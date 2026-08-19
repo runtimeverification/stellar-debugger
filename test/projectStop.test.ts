@@ -77,6 +77,27 @@ describe('projectSourceStop (docs/trace-cli-internal.md, serializable stop proje
         assert.strictEqual(v.truncated, undefined);
       }
     });
+
+    it('projects the whole call stack, innermost first (docs/callstack.md)', () => {
+      const sm = buildStopModel(resolved);
+      const stop = projectSourceStop(resolved, sm, 29);
+
+      // The adder is built above opt-0, so `add` survives only as an inline frame
+      // inside the #[contractimpl] wrapper: one activation, three frames (C2).
+      assert.deepStrictEqual(
+        stop.frames.map((f) => [f.level, f.name, f.kind, f.pc, f.source?.line]),
+        [
+          [0, 'add', 'inline', '0x2d', 16],
+          [1, 'invoke_raw', 'inline', '0x2d', 12],
+          [2, 'adder::__add::invoke_raw_extern', 'rust', '0x2d', 12],
+        ],
+      );
+      // `subtle` is a marker: absent, never `false`, for a workspace frame (C5).
+      for (const frame of stop.frames) {
+        assert.strictEqual(frame.subtle, undefined);
+        assert.ok(frame.source!.path.endsWith('examples/adder/src/lib.rs'));
+      }
+    });
   });
 
   describe('stepper-debug idx 29 (function `triple`)', () => {

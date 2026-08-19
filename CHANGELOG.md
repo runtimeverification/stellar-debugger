@@ -38,11 +38,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The `soroban-trace` CLI reports the same state per stop as `globals` and
   `ledger`, with a `changed` flag marking the storage entries that moved since
   the previous stop, and `hasGlobals`/`hasLedger` announced in `meta`.
-- New contributor spec: [`docs/state-inspection.md`](docs/state-inspection.md),
-  whose numbered rules (G1–G4, L1–L15) the test suite pins.
+- **A real call stack.** The Callstack view now shows every frame that led to the current line — not one frame named after a wasm instruction. Frame *structure* comes from the trace's own wasm activations, so it is right at any optimization level, and DWARF adds the Rust frames inlining erased: an optimized build still shows `add` → `invoke_raw` → the export wrapper rather than one collapsed function. Outer frames stand on the call they are suspended in, every frame is selectable and shows *its own* locals, wasm stack and Rust variables, and the Disassembly view follows the selected frame. Names come off a precision ladder — DWARF, then the demangled `name` section, then the function index, then the code offset — so a release build with no debug info still gets `control::Control::while_call+0x1a` instead of a bare address, and the trace's contract-call boundaries close the stack as labels at the bottom. Frames the user did not write (Rust `std`/`core`, dependencies) are deemphasized rather than hidden. `soroban-trace` reports the same stack per stop as `frames`.
+- New contributor specs: [`docs/state-inspection.md`](docs/state-inspection.md) (rules G1–G4, L1–L15) and [`docs/callstack.md`](docs/callstack.md) (rules C1–C8), both pinned by the test suite.
 
 ### Changed
 
+- The replay cursor's position in the recording moved out of the stack frame's name and into the thread's label (`soroban-vm [29/40]`): a frame name now says what the program is doing, and where the cursor sits is a property of the recorded thread.
 - **The single-invoke launch config is gone.** `contract`, `function`, `args`,
   `buildCommand` and `debugInfo` no longer sit at the top level: wrap them in a
   `transactions` array (see [`docs/debug-config.md`](docs/debug-config.md)). A

@@ -102,6 +102,8 @@ export const DW_TAG_variable = 0x34;
 export const DW_TAG_volatile_type = 0x35;
 export const DW_TAG_subprogram = 0x2e;
 export const DW_TAG_variant = 0x59;
+export const DW_TAG_inlined_subroutine = 0x1d;
+export const DW_TAG_namespace = 0x39;
 
 // Attributes (DW_AT_*) — variables, types, scopes, locations.
 export const DW_AT_location = 0x02;
@@ -121,6 +123,14 @@ export const DW_AT_frame_base = 0x40;
 export const DW_AT_type = 0x49;
 export const DW_AT_ranges = 0x55;
 export const DW_AT_data_bit_offset = 0x6b;
+// Inlined-subroutine attributes: where the inlined call was written, and which
+// abstract (or declared) subprogram it is an instance of.
+export const DW_AT_call_column = 0x57;
+export const DW_AT_call_file = 0x58;
+export const DW_AT_call_line = 0x59;
+export const DW_AT_abstract_origin = 0x31;
+export const DW_AT_specification = 0x47;
+export const DW_AT_linkage_name = 0x6e;
 
 // Base-type encodings (DW_ATE_*).
 export const DW_ATE_address = 0x01;

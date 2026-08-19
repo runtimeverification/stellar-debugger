@@ -51,7 +51,7 @@ const INSTR = { ...THREAD, granularity: 'instruction' as const };
 
 /** What the top stack frame shows at a stop. */
 interface Stop {
-  /** Trace index, parsed from the frame name's '[<cursor>/<last>]' probe. */
+  /** Trace index, read off the thread label's '[<cursor>/<last>]' probe (C8). */
   index: number;
   line: number;
   /** 1-based source column reported on the frame (S19: first non-whitespace). */
@@ -76,8 +76,10 @@ describe('Stepping spec (docs/stepping.md, DAP level)', () => {
     const res = await dc.stackTraceRequest(THREAD);
     assert.ok(res.body.stackFrames.length >= 1, 'expected at least one stack frame');
     const frame = res.body.stackFrames[0];
-    const probe = /\[(\d+)\/\d+\]$/.exec(frame.name);
-    assert.ok(probe, `frame name carries no trace-index probe: ${frame.name}`);
+    const threads = await dc.threadsRequest();
+    const label = threads.body.threads[0].name;
+    const probe = /\[(\d+)\/\d+\]$/.exec(label);
+    assert.ok(probe, `thread label carries no cursor probe: ${label}`);
     return {
       index: Number(probe[1]),
       line: frame.line,

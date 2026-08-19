@@ -23,6 +23,7 @@ import {
   summarizeScVal,
 } from '../soroban/scvalJson';
 import { Durability } from '../komet/trace';
+import { FrameKind, buildCallStack } from '../debugAdapter/callStack';
 
 /** A serializable single-stop projection. */
 export interface SourceStop {
@@ -36,6 +37,12 @@ export interface SourceStop {
   pc: string | null;
   /** functionNameAt(pc), or null. */
   function: string | null;
+  /**
+   * The call stack at this stop, innermost frame first (docs/callstack.md) — the
+   * same derivation the IDE's Callstack view shows, so a CLI trace and a debug
+   * session never disagree about who called whom. Never empty.
+   */
+  frames: StopFrame[];
   /** renderInstr(record.instr). */
   instr: string;
   /** Mapped source location, or null when unmapped. */
@@ -52,6 +59,21 @@ export interface SourceStop {
    * no ledger information (L14).
    */
   ledger?: StopLedger;
+}
+
+/** One call-stack frame of a stop (docs/callstack.md). */
+export interface StopFrame {
+  /** 0 = innermost. */
+  level: number;
+  name: string;
+  /** Which rung of the naming ladder placed this frame: rust/inline/wasm/contract. */
+  kind: FrameKind;
+  /** Hex code offset, e.g. "0x2d", or null. */
+  pc: string | null;
+  /** Where the frame stands, or null when unmapped. */
+  source: { path: string; line: number; column?: number } | null;
+  /** Set for a frame the user did not write (toolchain, dependency, or sourceless). */
+  subtle?: true;
 }
 
 /** The ledger projection of one stop (docs/state-inspection.md, Presentation). */
@@ -216,6 +238,7 @@ export function projectSourceStop(
     depth: stopModel.depths[index],
     pc: pcHex,
     function: functionName,
+    frames: projectFrames(resolved, stopModel, index),
     instr: renderInstr(record.instr),
     source,
     variables,
@@ -237,6 +260,32 @@ export function projectSourceStop(
   }
 
   return stop;
+}
+
+/**
+ * The stop's call stack in the CLI's JSON schema. `variables` are deliberately
+ * NOT repeated per frame: a stop's `variables` are the innermost frame's, and a
+ * per-frame expansion would multiply the output size of every stop.
+ */
+function projectFrames(
+  resolved: ResolvedTrace,
+  stopModel: StopModel,
+  index: number,
+): StopFrame[] {
+  const input = { resolved, frames: stopModel.frames, ranges: stopModel.ranges };
+  return buildCallStack(input, index).map((frame) => {
+    const projected: StopFrame = {
+      level: frame.level,
+      name: frame.name,
+      kind: frame.kind,
+      pc: frame.pc === null ? null : '0x' + frame.pc.toString(16),
+      source: frame.source === null ? null : { ...frame.source },
+    };
+    if (frame.subtle) {
+      projected.subtle = true;
+    }
+    return projected;
+  });
 }
 
 /**
