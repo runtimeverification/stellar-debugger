@@ -1,5 +1,5 @@
 /**
- * Normalization of a `soroban` launch configuration into a canonical,
+ * Normalization of a `stellar` launch configuration into a canonical,
  * ordered transaction sequence.
  *
  * A launch config carries an explicit `transactions` array (deploy / invoke

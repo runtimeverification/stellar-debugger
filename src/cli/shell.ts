@@ -1,5 +1,5 @@
 /**
- * The process shell both CLI entry points (`soroban-trace`, `soroban-dap`) run
+ * The process shell both CLI entry points (`stellar-trace`, `stellar-dap`) run
  * their parse result through, so they agree on the exit codes and on which
  * stream each kind of output goes to:
  *

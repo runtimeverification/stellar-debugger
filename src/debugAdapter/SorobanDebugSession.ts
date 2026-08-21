@@ -318,7 +318,7 @@ export class SorobanDebugSession extends DebugSession {
   protected threadsRequest(response: DebugProtocol.ThreadsResponse): void {
     const position =
       this.model && !this.model.isEmpty ? ` [${this.model.cursor}/${this.model.length - 1}]` : '';
-    response.body = { threads: [new Thread(THREAD_ID, `soroban-vm${position}`)] };
+    response.body = { threads: [new Thread(THREAD_ID, `stellar-vm${position}`)] };
     this.sendResponse(response);
   }
 

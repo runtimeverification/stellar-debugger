@@ -12,7 +12,7 @@ import { VariableResolver } from '../sourcemap/VariableResolver';
 import { Disassembly } from '../wasm/Disassembly';
 import { TxStep, TraceSelector } from '../pipeline/config';
 
-/** Attributes of a `soroban` launch configuration (mirrors package.json). */
+/** Attributes of a `stellar` launch configuration (mirrors package.json). */
 export interface SorobanLaunchArgs extends DebugProtocol.LaunchRequestArguments {
   /**
    * The ordered transaction sequence (deploy / invoke steps) to run. Build

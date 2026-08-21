@@ -1,6 +1,6 @@
 /**
  * Unit suite for the pure argv parser behind the DAP TCP server CLI
- * (`soroban-dap`): --help and argument validation.
+ * (`stellar-dap`): --help and argument validation.
  *
  *   parseServerArgs(argv): ServerParse   from src/server/cliArgs.ts
  *   SERVER_USAGE: string                 the help text
@@ -50,7 +50,7 @@ describe('parseServerArgs', () => {
     });
 
     it('SERVER_USAGE carries the documented stable substrings', () => {
-      for (const needle of ['soroban-dap', 'Usage', '--port', '--host', '-h, --help']) {
+      for (const needle of ['stellar-dap', 'Usage', '--port', '--host', '-h, --help']) {
         assert.ok(SERVER_USAGE.includes(needle), `SERVER_USAGE should contain ${needle}`);
       }
     });

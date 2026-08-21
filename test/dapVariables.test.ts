@@ -19,7 +19,7 @@ describe('SorobanDebugSession source-level Variables view', () => {
   let dc: DebugClient;
 
   beforeEach(async () => {
-    dc = new DebugClient('node', ADAPTER, 'soroban');
+    dc = new DebugClient('node', ADAPTER, 'stellar');
     await dc.start();
   });
 

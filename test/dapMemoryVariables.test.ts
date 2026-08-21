@@ -31,7 +31,7 @@ describe('SorobanDebugSession memory-backed Rust variables (end-to-end)', () => 
   let dc: DebugClient;
 
   beforeEach(async () => {
-    dc = new DebugClient('node', ADAPTER, 'soroban');
+    dc = new DebugClient('node', ADAPTER, 'stellar');
     await dc.start();
   });
 

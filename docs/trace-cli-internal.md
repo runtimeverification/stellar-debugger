@@ -1,8 +1,8 @@
-# `soroban-trace` internals
+# `stellar-trace` internals
 
 > **Audience:** `contributor` · `maintainer` · `integrator` (internals)
 >
-> **TL;DR:** How `soroban-trace` turns a resolved trace into Rust-source-level
+> **TL;DR:** How `stellar-trace` turns a resolved trace into Rust-source-level
 > JSONL, and the `vscode`-free shared core it sits on (also used by the DAP
 > server — see [`dap-cli-internal.md`](./dap-cli-internal.md)). Documents the
 > `SourceStop`/`TraceVar` schema and the ground-truth fixtures. User-facing

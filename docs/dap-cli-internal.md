@@ -1,4 +1,4 @@
-# `soroban-dap` internals
+# `stellar-dap` internals
 
 > **Audience:** `contributor` · `maintainer` · `integrator` (internals)
 >

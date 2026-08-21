@@ -4,7 +4,7 @@
 >
 > **TL;DR:** The precise contract for what state the debugger shows at a replay cursor beyond the wasm value stack and locals — the module's **wasm globals** (G1–G4) and the **Stellar ledger** (L1–L14): contract storage across all three durabilities with TTLs, account balances, ledger sequence/timestamp, contract instance metadata, the host object table, and the contract-call stack. Defines the trace-record contract each rule depends on, how state is reconstructed at an arbitrary cursor (including rollback of failed sub-calls), and how every rule degrades when a trace predates the field it needs.
 
-The contract between the trace producer (komet's K semantics, carried verbatim by komet-node) and the debugger's state views: the `Globals` and `Ledger` scopes in the VS Code Variables view, the same scopes over the DAP server, and the `globals`/`ledger` projections in the `soroban-trace` CLI.
+The contract between the trace producer (komet's K semantics, carried verbatim by komet-node) and the debugger's state views: the `Globals` and `Ledger` scopes in the VS Code Variables view, the same scopes over the DAP server, and the `globals`/`ledger` projections in the `stellar-trace` CLI.
 The test suite (`test/trace.test.ts`, `test/ledgerImage.test.ts`, `test/scvalJson.test.ts`, `test/dapLedger.test.ts`, `test/prop/ledgerImage.property.test.ts`) pins these rules; every rule ID below is cited by at least one test.
 
 For how the cursor *moves*, see [`stepping.md`](stepping.md). This document is only about what is *visible* once it has come to rest.

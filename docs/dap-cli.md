@@ -1,13 +1,13 @@
-# `soroban-dap` — standalone DAP server (TCP)
+# `stellar-dap` — standalone DAP server (TCP)
 
 > **Audience:** `other-editor user` (nvim-dap / IntelliJ / Emacs) · `tooling integrator`
 >
-> **TL;DR:** `soroban-dap` serves the Soroban debug adapter over a TCP socket
+> **TL;DR:** `stellar-dap` serves the Stellar debug adapter over a TCP socket
 > (DAP's canonical "server mode"), so debuggers *other* than VS Code can drive
 > it. For the one-shot JSONL trace CLI, see [`trace-cli.md`](./trace-cli.md); for
 > internals, see [`dap-cli-internal.md`](./dap-cli-internal.md).
 
-`soroban-dap` runs the debug adapter as a TCP server. Each client connection
+`stellar-dap` runs the debug adapter as a TCP server. Each client connection
 gets its own independent session; the launch configuration is sent by the client
 over the wire, exactly as in the editor.
 
@@ -19,10 +19,12 @@ npm run build
 ```
 
 This produces `dist/dap-server.js`. Run it directly with
-`node dist/dap-server.js …`, or expose it as the `soroban-dap` command by
+`node dist/dap-server.js …`, or expose it as the `stellar-dap` command by
 installing the package (`npm install -g .`, or `npm link` for local
 development). (`npm run build` also builds the trace CLI — see
 [`trace-cli.md`](./trace-cli.md).)
+
+The marketplace build of the extension does not install these CLIs; they are built from this repository.
 
 Debugging a real contract needs the same tools as the editor — the [Stellar
 CLI](https://developers.stellar.org/docs/tools/cli) and
@@ -32,13 +34,13 @@ with a recorded `rawTrace` (offline replay).
 
 ## Usage
 
-`soroban-dap --help`:
+`stellar-dap --help`:
 
 ```text
-soroban-dap — serve the Soroban debug adapter over a TCP socket
+stellar-dap — serve the Stellar debug adapter over a TCP socket
 
 Usage:
-  soroban-dap [--port <n>] [--host <addr>]
+  stellar-dap [--port <n>] [--host <addr>]
 
 Options:
   --port <n>     TCP port to listen on (default 4711).
@@ -63,9 +65,9 @@ launch configuration at the port with `debugServer`:
 
 ```jsonc
 {
-  "type": "soroban",
+  "type": "stellar",
   "request": "launch",
-  "name": "Attach to soroban-dap",
+  "name": "Attach to stellar-dap",
   "debugServer": 4711,
   "rawTrace": "test/fixtures/adder-debug.trace.jsonl",
   "wasmPath": "test/fixtures/adder-debug.wasm"

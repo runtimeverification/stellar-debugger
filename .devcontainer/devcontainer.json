@@ -1,5 +1,5 @@
 {
-  "name": "simbolik-komet",
+  "name": "stellar-debugger",
   "build": {
     "dockerfile": "Dockerfile"
   },

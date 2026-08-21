@@ -1,5 +1,5 @@
 /**
- * Thin CLI entry for the one-shot trace projection (`soroban-trace`).
+ * Thin CLI entry for the one-shot trace projection (`stellar-trace`).
  *
  * Parses argv with the pure `parseTraceArgs`, then — for a `run` result —
  * resolves a trace through the selected backend, projects it to JSONL via

@@ -22,7 +22,7 @@ describe('SorobanDebugSession Globals + Ledger scopes (docs/state-inspection.md)
   let dc: DebugClient;
 
   beforeEach(async () => {
-    dc = new DebugClient('node', ADAPTER, 'soroban');
+    dc = new DebugClient('node', ADAPTER, 'stellar');
     await dc.start();
   });
 

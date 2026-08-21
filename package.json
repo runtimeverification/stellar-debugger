@@ -1,6 +1,6 @@
 {
-  "name": "simbolik-komet",
-  "displayName": "Soroban Debugger (komet)",
+  "name": "stellar-debugger",
+  "displayName": "Stellar Debugger",
   "description": "Time-travel debugger for Stellar/Soroban smart contracts, backed by komet-node",
   "version": "0.0.1",
   "publisher": "runtimeverification",
@@ -22,22 +22,22 @@
   ],
   "main": "./dist/extension.js",
   "bin": {
-    "soroban-dap": "dist/dap-server.js",
-    "soroban-trace": "dist/trace.js"
+    "stellar-dap": "dist/dap-server.js",
+    "stellar-trace": "dist/trace.js"
   },
   "activationEvents": [
     "onDebug"
   ],
   "contributes": {
     "configuration": {
-      "title": "Soroban Debugger (komet)",
+      "title": "Stellar Debugger",
       "properties": {
-        "soroban.kometNode.path": {
+        "stellar.kometNode.path": {
           "type": "string",
           "default": "komet-node",
           "markdownDescription": "Path to the `komet-node` executable. Defaults to `komet-node` found on your `PATH`; set an absolute path to override. A launch configuration's `node.command` takes precedence over this setting."
         },
-        "soroban.stellar.path": {
+        "stellar.cliPath": {
           "type": "string",
           "default": "stellar",
           "markdownDescription": "Path to the `stellar` CLI executable, used to build contracts (as `<stellar> contract build`). Defaults to `stellar` found on your `PATH`; set an absolute path to override. A launch configuration's `buildCommand` takes precedence over this setting."
@@ -46,9 +46,9 @@
     },
     "commands": [
       {
-        "command": "soroban.debug",
-        "title": "Soroban: Debug Contract Function",
-        "category": "Soroban"
+        "command": "stellar.debug",
+        "title": "Stellar: Debug Contract Function",
+        "category": "Stellar"
       }
     ],
     "breakpoints": [
@@ -58,8 +58,8 @@
     ],
     "debuggers": [
       {
-        "type": "soroban",
-        "label": "Soroban (komet)",
+        "type": "stellar",
+        "label": "Stellar (komet)",
         "languages": [
           "rust"
         ],
@@ -101,7 +101,7 @@
                     },
                     "buildCommand": {
                       "type": "string",
-                      "markdownDescription": "`deploy` only: command used to build a `contract` directory. Overrides the `soroban.stellar.path` setting. Defaults to `<soroban.stellar.path> contract build`."
+                      "markdownDescription": "`deploy` only: command used to build a `contract` directory. Overrides the `stellar.cliPath` setting. Defaults to `<stellar.cliPath> contract build`."
                     },
                     "debugInfo": {
                       "type": "boolean",
@@ -113,7 +113,7 @@
                       "description": "invoke only: name of the contract function to call."
                     },
                     "args": {
-                      "markdownDescription": "`invoke` only: arguments, as an object keyed by the function's parameter names (composites, enums `{ \"tag\": ... }`, tuples/vecs as arrays, `i128` as a decimal string, addresses as `G…`/`C…` strings). Values are encoded against the contract's own spec. The tokens `${sourceAddress}` and `${contract:<id>}` are expanded inside string values."
+                      "markdownDescription": "`invoke` only: arguments, as an object keyed by the function's parameter names (composites, enums `{ \"tag\": ... }`, tuples/vecs as arrays, `i128` as a decimal string, addresses as `G\u2026`/`C\u2026` strings). Values are encoded against the contract's own spec. The tokens `${sourceAddress}` and `${contract:<id>}` are expanded inside string values."
                     }
                   }
                 }
@@ -153,7 +153,7 @@
                   },
                   "command": {
                     "type": "string",
-                    "description": "Path/command used to spawn komet-node. Overrides the `soroban.kometNode.path` setting (which defaults to `komet-node` on your PATH)."
+                    "description": "Path/command used to spawn komet-node. Overrides the `stellar.kometNode.path` setting (which defaults to `komet-node` on your PATH)."
                   },
                   "ioDir": {
                     "type": "string",
@@ -181,9 +181,9 @@
         },
         "initialConfigurations": [
           {
-            "type": "soroban",
+            "type": "stellar",
             "request": "launch",
-            "name": "Soroban: Debug add(1, 2)",
+            "name": "Stellar: Debug add(1, 2)",
             "transactions": [
               {
                 "kind": "deploy",
@@ -204,12 +204,12 @@
         ],
         "configurationSnippets": [
           {
-            "label": "Soroban: Debug contract function",
+            "label": "Stellar: Debug contract function",
             "description": "Build, deploy, and time-travel debug a Soroban contract function",
             "body": {
-              "type": "soroban",
+              "type": "stellar",
               "request": "launch",
-              "name": "Soroban: Debug ${1:function}",
+              "name": "Stellar: Debug ${1:function}",
               "transactions": [
                 {
                   "kind": "deploy",

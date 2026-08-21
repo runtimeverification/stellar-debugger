@@ -21,7 +21,7 @@ describe('SorobanDebugSession (DAP replay)', () => {
   let dc: DebugClient;
 
   beforeEach(async () => {
-    dc = new DebugClient('node', ADAPTER, 'soroban');
+    dc = new DebugClient('node', ADAPTER, 'stellar');
     await dc.start();
   });
 
@@ -65,7 +65,7 @@ describe('SorobanDebugSession (DAP replay)', () => {
 
   /**
    * Assert where the replay cursor is. C8: the position in the recording is
-   * reported in the THREAD's name (`soroban-vm [29/40]`), not in a frame label —
+   * reported in the THREAD's name (`stellar-vm [29/40]`), not in a frame label —
    * a frame name states what the program is doing.
    */
   async function assertAt(index: number): Promise<void> {

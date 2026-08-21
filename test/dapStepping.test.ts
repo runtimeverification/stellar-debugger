@@ -64,7 +64,7 @@ describe('Stepping spec (docs/stepping.md, DAP level)', () => {
   let dc: DebugClient;
 
   beforeEach(async () => {
-    dc = new DebugClient('node', ADAPTER, 'soroban');
+    dc = new DebugClient('node', ADAPTER, 'stellar');
     await dc.start();
   });
 

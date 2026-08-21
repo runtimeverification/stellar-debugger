@@ -1,5 +1,5 @@
 /**
- * Extension entry point. Wires the Soroban debug type into VSCode:
+ * Extension entry point. Wires the Stellar debug type into VSCode:
  *   - a DebugConfigurationProvider that fills in sensible defaults, and
  *   - an inline DebugAdapterDescriptorFactory that runs the trace-replay
  *     DebugSession in-process (the trace is fully materialized, so there is no
@@ -17,9 +17,9 @@ import { SorobanLaunchArgs } from './debugAdapter/types';
 export function activate(context: vscode.ExtensionContext): void {
   const provider = new SorobanConfigurationProvider();
   context.subscriptions.push(
-    vscode.debug.registerDebugConfigurationProvider('soroban', provider),
-    vscode.debug.registerDebugAdapterDescriptorFactory('soroban', new SorobanAdapterFactory()),
-    vscode.commands.registerCommand('soroban.debug', () => startDebugFromActiveEditor()),
+    vscode.debug.registerDebugConfigurationProvider('stellar', provider),
+    vscode.debug.registerDebugAdapterDescriptorFactory('stellar', new SorobanAdapterFactory()),
+    vscode.commands.registerCommand('stellar.debug', () => startDebugFromActiveEditor()),
   );
 }
 
@@ -45,9 +45,9 @@ class SorobanConfigurationProvider implements vscode.DebugConfigurationProvider 
     if (!config.type && !config.request && !config.name) {
       // Launched with no launch.json: offer a minimal default if a function name
       // can't be inferred, bail with a hint.
-      config.type = 'soroban';
+      config.type = 'stellar';
       config.request = 'launch';
-      config.name = 'Soroban: Debug';
+      config.name = 'Stellar: Debug';
     }
     if (config.request === undefined) {
       config.request = 'launch';
@@ -55,7 +55,7 @@ class SorobanConfigurationProvider implements vscode.DebugConfigurationProvider 
     applyBinaryPaths(config, folder);
     if (!config.rawTrace && !Array.isArray(config.transactions)) {
       return vscode.window
-        .showErrorMessage('Soroban debug: a `transactions` array (or a `rawTrace` file) is required in the launch configuration.')
+        .showErrorMessage('Stellar debug: a `transactions` array (or a `rawTrace` file) is required in the launch configuration.')
         .then(() => undefined);
     }
     return config;
@@ -65,7 +65,7 @@ class SorobanConfigurationProvider implements vscode.DebugConfigurationProvider 
 /**
  * Resolve the locations of the external binaries the pipeline shells out to
  * (`komet-node` and the `stellar` CLI). A launch configuration's own fields win;
- * otherwise fall back to the `soroban.*` settings, which default to the binaries
+ * otherwise fall back to the `stellar.*` settings, which default to the binaries
  * on `$PATH`. This keeps the `vscode`-free pipeline modules oblivious to VSCode
  * settings — they just receive a resolved command.
  */
@@ -73,7 +73,7 @@ function applyBinaryPaths(
   config: vscode.DebugConfiguration,
   folder: vscode.WorkspaceFolder | undefined,
 ): void {
-  const settings = vscode.workspace.getConfiguration('soroban', folder?.uri ?? null);
+  const settings = vscode.workspace.getConfiguration('stellar', folder?.uri ?? null);
   const kometNodePath = settings.get<string>('kometNode.path')?.trim() || 'komet-node';
   const stellarPath = settings.get<string>('stellar.path')?.trim() || 'stellar';
 
@@ -83,7 +83,7 @@ function applyBinaryPaths(
     config.node.command = kometNodePath;
   }
   // Inject the resolved build command into any `deploy` step that doesn't set
-  // its own, so the `soroban.stellar.path` setting still applies under the
+  // its own, so the `stellar.cliPath` setting still applies under the
   // `transactions` schema. The build command runs through a shell, so quote a
   // path that contains spaces.
   const buildCommand = `${quoteForShell(stellarPath)} contract build`;
@@ -103,7 +103,7 @@ function quoteForShell(p: string): string {
 async function startDebugFromActiveEditor(): Promise<void> {
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) {
-    vscode.window.showErrorMessage('Soroban debug: open a workspace folder first.');
+    vscode.window.showErrorMessage('Stellar debug: open a workspace folder first.');
     return;
   }
   const fn = await vscode.window.showInputBox({
@@ -114,9 +114,9 @@ async function startDebugFromActiveEditor(): Promise<void> {
     return;
   }
   await vscode.debug.startDebugging(folder, {
-    type: 'soroban',
+    type: 'stellar',
     request: 'launch',
-    name: `Soroban: Debug ${fn}`,
+    name: `Stellar: Debug ${fn}`,
     transactions: [
       { kind: 'deploy', id: 'contract', contract: folder.uri.fsPath },
       { kind: 'invoke', contract: 'contract', function: fn },

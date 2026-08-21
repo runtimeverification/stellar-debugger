@@ -38,7 +38,7 @@ describe('Callstack view (docs/callstack.md, DAP level)', () => {
   let dc: DebugClient;
 
   beforeEach(async () => {
-    dc = new DebugClient('node', ADAPTER, 'soroban');
+    dc = new DebugClient('node', ADAPTER, 'stellar');
     await dc.start();
   });
 
@@ -161,7 +161,7 @@ describe('Callstack view (docs/callstack.md, DAP level)', () => {
     it('carries the recording position in the thread label, not a frame name', async () => {
       await launchAndStop(ADDER);
       const threads = await dc.threadsRequest();
-      assert.match(threads.body.threads[0].name, /^soroban-vm \[\d+\/40\]$/);
+      assert.match(threads.body.threads[0].name, /^stellar-vm \[\d+\/40\]$/);
       for (const frame of (await frames()).body.stackFrames) {
         assert.ok(
           !/\[\d+\/\d+\]/.test(frame.name),

@@ -1,5 +1,5 @@
 /**
- * Argv parsing for the standalone TCP DAP server CLI (`soroban-dap`).
+ * Argv parsing for the standalone TCP DAP server CLI (`stellar-dap`).
  *
  * `parseServerArgs` resolves `--help`, validates `--host`/`--port`, and maps a
  * raw argv slice onto a discriminated union the (coverage-excluded) shell
@@ -9,11 +9,11 @@
 import { CliParse } from '../cli/shell';
 import { FlagSpec, isNonNegativeInt, parseFlags, wantsHelp } from '../cli/flags';
 
-/** The `soroban-dap` help text. */
-export const SERVER_USAGE = `soroban-dap — serve the Soroban debug adapter over a TCP socket
+/** The `stellar-dap` help text. */
+export const SERVER_USAGE = `stellar-dap — serve the Stellar debug adapter over a TCP socket
 
 Usage:
-  soroban-dap [--port <n>] [--host <addr>]
+  stellar-dap [--port <n>] [--host <addr>]
 
 Options:
   --port <n>     TCP port to listen on (default 4711).
@@ -23,17 +23,17 @@ Options:
 Connect any DAP client to the port (e.g. VS Code "debugServer": <port>).
 `;
 
-/** Outcome of parsing `soroban-dap` argv. */
+/** Outcome of parsing `stellar-dap` argv. */
 export type ServerParse = CliParse<{ host?: string; port: number }>;
 
-const HINT = "Run 'soroban-dap --help' for usage.";
+const HINT = "Run 'stellar-dap --help' for usage.";
 const DEFAULT_PORT = 4711;
 const MAX_PORT = 65535;
 
 const FLAGS: FlagSpec = { value: ['--host', '--port'] };
 
 /**
- * Devex front door for `soroban-dap`: resolve `--help`, validate tokens and
+ * Devex front door for `stellar-dap`: resolve `--help`, validate tokens and
  * `--port`, and map argv onto a `ServerParse`. Pure.
  */
 export function parseServerArgs(argv: string[]): ServerParse {

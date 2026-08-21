@@ -1,5 +1,5 @@
 /**
- * Standalone TCP DAP server (`soroban-dap`) — docs/dap-cli-internal.md, "Interface 2".
+ * Standalone TCP DAP server (`stellar-dap`) — docs/dap-cli-internal.md, "Interface 2".
  *
  * Opens a `net.createServer`; for each connection it creates a fresh
  * `SorobanDebugSession(backendFor)` (the selector overload, so the backend can

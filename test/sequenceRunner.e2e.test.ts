@@ -73,7 +73,7 @@ interface InvokeTx {
   id?: string;
 }
 interface TxConfig {
-  type: 'soroban';
+  type: 'stellar';
   request: 'launch';
   sourceSecret?: string;
   node: { attach: false; command: string; port: number };
@@ -163,7 +163,7 @@ describe('SequenceRunner e2e', function () {
   // ------------------------------------------------------------------------
   it('deploys ctor_probe, runs __constructor then admin_set, and the constructor state persists into the traced tx', async () => {
     const resolved = await runSequence({
-      type: 'soroban',
+      type: 'stellar',
       request: 'launch',
       sourceSecret: SOURCE_SECRET,
       node: nodeSettings(),
@@ -224,7 +224,7 @@ describe('SequenceRunner e2e', function () {
   // ------------------------------------------------------------------------
   it('traces a supply invocation whose argument is a Vec<(AssetKey,i128)>', async () => {
     const resolved = await runSequence({
-      type: 'soroban',
+      type: 'stellar',
       request: 'launch',
       sourceSecret: SOURCE_SECRET,
       node: nodeSettings(),
@@ -279,7 +279,7 @@ describe('SequenceRunner e2e', function () {
   // ------------------------------------------------------------------------
   it('does not throw when the traced last step traps, and still returns its non-empty trace', async () => {
     const resolved = await runSequence({
-      type: 'soroban',
+      type: 'stellar',
       request: 'launch',
       sourceSecret: SOURCE_SECRET,
       node: nodeSettings(),
@@ -317,7 +317,7 @@ describe('SequenceRunner e2e', function () {
   // ------------------------------------------------------------------------
   it('executes two byte-identical invokes independently (distinct hashes, not deduped)', async () => {
     const resolved = await runSequence({
-      type: 'soroban',
+      type: 'stellar',
       request: 'launch',
       sourceSecret: SOURCE_SECRET,
       node: nodeSettings(),
