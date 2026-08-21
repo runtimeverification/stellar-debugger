@@ -9,7 +9,7 @@
  * Pure module (uses fs, no `vscode` imports).
  */
 
-import { promises as fs } from 'fs';
+import { readFileOrExplain, readTextOrExplain } from '../../diagnostics/files';
 import { parseTraceJsonl } from '../../komet/trace';
 import { TraceModel } from '../TraceModel';
 import { buildDebugArtifacts, traceDerivedArtifacts } from '../artifacts';
@@ -21,12 +21,21 @@ export class RawTraceBackend implements SessionBackend {
       throw new Error('RawTraceBackend requires the `rawTrace` launch attribute (path to a JSONL trace).');
     }
     report(`Reading trace from ${args.rawTrace}`);
-    const jsonl = await fs.readFile(args.rawTrace, 'utf8');
+    const jsonl = await readTextOrExplain(
+      args.rawTrace,
+      'the recorded trace (`rawTrace`)',
+      'Record one with `stellar-trace --out <file>`, or point `rawTrace` at an existing JSONL trace.',
+    );
     const model = new TraceModel(parseTraceJsonl(jsonl));
 
     if (args.wasmPath) {
       report(`Reading contract wasm from ${args.wasmPath}`);
-      const wasm = await fs.readFile(args.wasmPath);
+      const wasm = await readFileOrExplain(
+        args.wasmPath,
+        'the contract wasm (`wasmPath`)',
+        'It should be the same `.wasm` the trace was recorded from. Drop `wasmPath` to replay ' +
+          'without source mapping.',
+      );
       return { model, ...buildDebugArtifacts(wasm, model, report) };
     }
     // Without wasm there is nothing to validate positions against, and nothing

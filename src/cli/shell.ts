@@ -7,9 +7,16 @@
  *   usage  -> stderr, exit 2
  *   run    -> the command; a thrown error goes to stderr, exit 1
  *
+ * A setup error (a missing komet-node, an absent toolchain, an unreadable
+ * trace) is printed as its message alone: it is already an explanation, and a
+ * stack trace in front of it only buries the fix. Anything else keeps its stack,
+ * because anything else is a bug.
+ *
  * Coverage-excluded along with the entry points, being the same category of
  * process-level plumbing: the parsers it dispatches are unit-tested directly.
  */
+
+import { formatErrorDetail } from '../diagnostics/setup';
 
 /** A command's parse result: show help, report a usage error, or run with `R`. */
 export type CliParse<R> =
@@ -32,7 +39,7 @@ export function runCli<R>(
     return;
   }
   run(parsed).catch((err) => {
-    process.stderr.write(String(err instanceof Error ? (err.stack ?? err.message) : err) + '\n');
+    process.stderr.write(formatErrorDetail(err) + '\n');
     process.exit(1);
   });
 }

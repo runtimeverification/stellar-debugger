@@ -40,7 +40,7 @@ To build, deploy, and debug a contract you'll need:
 
 Replaying an already-recorded trace needs none of the above — no toolchain, no network, no komet-node.
 
-The repository ships a [devcontainer](.devcontainer/Dockerfile) with all of it preinstalled if you'd rather not set it up by hand.
+The repository ships a [devcontainer](.devcontainer/Dockerfile) with all of it preinstalled if you'd rather not set it up by hand. If something is missing, the debugger says which tool it is and how to get it, and links back to [Troubleshooting](#troubleshooting) below.
 
 ## Install
 
@@ -98,7 +98,7 @@ Top-level attributes:
 | `transactions` | Ordered, non-empty array of `deploy` / `invoke` steps (see below) — the live sequence to run. |
 | `trace` | Which transaction feeds the debug session: `"last"` (default), a 0-based index into `transactions`, or a step `id` (a deploy's `id` or an invoke's optional `id`). |
 | `sourceSecret` | Source account secret (`S…`) used to sign every transaction. A deterministic account is derived if omitted. Its address is available in `args` as `${sourceAddress}`. |
-| `node` | Local-network connection/spawn settings: `attach`, `host`, `port`, `command`, `ioDir`. |
+| `node` | Local-network connection/spawn settings: `attach`, `host`, `port`, `command`, `ioDir`, `timeoutMs`, `healthTimeoutMs`. |
 | `rawTrace` | Replay a previously recorded run from a file instead of building and deploying (optionally with `wasmPath` for source mapping). |
 
 A **`deploy`** step uploads a contract and registers a handle:
@@ -136,6 +136,31 @@ The debugger is also available outside VS Code:
   editors (nvim-dap, IntelliJ, Emacs) can drive it.
 
 Both are built from this repository rather than installed by the extension: clone it, `npm install && npm run build`, and either run `node dist/trace.js` directly or `npm install -g .` to put `stellar-trace` and `stellar-dap` on your `PATH`.
+
+## Troubleshooting
+
+Every message the debugger raises about a missing dependency links here. Each row is what it says and what to do about it.
+
+| What you see | What it means | What to do |
+|---|---|---|
+| *komet-node could not be started: there is no executable named `komet-node` on your `PATH`* | The local network is not installed. | `kup install komet-node`. If it lives off your `PATH`, set the `stellar.kometNode.path` setting (or `node.command` in the launch configuration) to its full path. |
+| *komet-node could not be started: … is not executable* | The file is there but has no execute bit. | `chmod +x <path>`, or point the setting at the right file. |
+| *komet-node exited … before it was ready to serve requests* | The node started and died; its own output is quoted in the message and in the Debug Console. | Most often port 8000 is already taken by an earlier run — set `node.port` to a free port, or stop the other process. |
+| *komet-node did not become ready within 60s* | The node is running but never answered. | Check the Debug Console for its output. A very large contract can need longer to boot: raise `node.healthTimeoutMs`. |
+| *No komet-node answered at http://… — your launch configuration sets `node.attach`* | Nothing is listening where you told the debugger to attach. | Start a node yourself (`komet-node --host <host> --port <port>`), or drop `node.attach` and let the debugger spawn one. |
+| *This execution trace was recorded by a komet-node that is too old* | The installed node predates komet v0.1.87 and records the old trace shape. | `kup install komet-node`, then run again. Re-record any saved trace file with the upgraded node. |
+| *komet-node does not support the `traceTransaction` request* | Same cause, seen one step earlier: the node cannot trace at all. | `kup install komet-node`. |
+| *The contract build failed: `stellar` was not found* | No Stellar CLI. | Install the [Stellar CLI](https://developers.stellar.org/docs/tools/cli), or point `stellar.cliPath` (or a deploy step's `buildCommand`) at it. |
+| *The contract build failed: `cargo` was not found* | No Rust toolchain. | Install one from [rustup.rs](https://rustup.rs). |
+| *The contract build failed: the Rust WebAssembly target is missing* | The toolchain has no wasm target. | `rustup target add wasm32v1-none` (toolchains older than Rust 1.84 use `wasm32-unknown-unknown`). |
+| *The contract build failed: `<command>` exited with code …* | An ordinary build failure; the message quotes the tail and the Debug Console has the whole log. | Fix the build as you would from a terminal — the same command run by hand reproduces it. |
+| *The contract build reported success but produced no WebAssembly file* | The build ran but wrote no `.wasm` where the debugger looks. | Check that the directory is a contract crate (a `Cargo.toml` with `crate-type = ["cdylib"]`) and that the build command really builds it. |
+| *Cannot read the recorded trace (`rawTrace`) at …* | The replay input is missing or unreadable. | Point `rawTrace` at an existing JSONL trace, or record one with `stellar-trace --out <file>`. |
+
+Two things worth knowing before you start diagnosing:
+
+- **Replay needs nothing.** A configuration with `rawTrace` uses no komet-node, no Stellar CLI and no Rust toolchain, so it is the quickest way to tell a broken toolchain apart from a broken configuration.
+- **The Debug Console has the full log.** Every message above is also written there, along with the output of komet-node and of the build, which is usually where the specific cause is named.
 
 ## Contributing
 

@@ -42,6 +42,7 @@ import { ledgerNodes, ledgerSnapshot } from './ledgerView';
 import { globalNodes, localNodes, stackNodes } from './wasmView';
 import { makeRuntimeState } from './runtimeState';
 import { DecodedValue, ChildVar } from '../dwarf/ValueDecoder';
+import { formatErrorDetail, isUserFacing } from '../diagnostics/setup';
 
 const THREAD_ID = 1;
 
@@ -210,13 +211,19 @@ export class SorobanDebugSession extends DebugSession {
       this.cursor.toEntry();
       this.reportStop('entry');
     } catch (e) {
-      // sendErrorResponse surfaces only a one-line, non-copyable modal. Mirror
-      // the full error (with stack) into the debug console first, so the details
-      // land in the same copyable log as the rest of the launch output.
+      // sendErrorResponse surfaces only a modal. Mirror the error into the debug
+      // console first, so the details land in the same copyable log as the rest
+      // of the launch output.
+      //
+      // A setup error (missing komet-node, absent toolchain, unreadable trace)
+      // is already written for the user and says how to fix itself, so it is
+      // surfaced verbatim, with no stack and no "Failed to start" preamble in
+      // front of the explanation. Anything else is a bug: it keeps the preamble
+      // and, in the console, its stack.
+      const setup = isUserFacing(e);
       const message = e instanceof Error ? e.message : String(e);
-      const detail = e instanceof Error ? (e.stack ?? e.message) : String(e);
-      this.log(`Failed to start debug session: ${detail}`);
-      this.sendErrorResponse(response, 2000, `Failed to start debug session: ${message}`);
+      this.log(setup ? message : `Failed to start debug session: ${formatErrorDetail(e)}`);
+      this.sendErrorResponse(response, 2000, setup ? message : `Failed to start debug session: ${message}`);
       this.sendEvent(new TerminatedEvent());
     }
   }

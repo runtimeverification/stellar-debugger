@@ -4,6 +4,21 @@ All notable changes to this extension are documented in this file. The format is
 
 ## [Unreleased]
 
+### Changed
+
+- When a dependency is missing, the debugger now says which one, how to install it, and where to set its path, and links to the README's new Troubleshooting section. This replaces messages like `build command exited with code 127` and `trace line 1: 'kind' must be a non-empty string`, which named a symptom rather than a cause.
+- A komet-node that cannot be started — not installed, or not executable — fails the launch immediately instead of after the 60-second health-check timeout.
+- A komet-node that exits during startup is reported with its exit code and its own last output, rather than as a health-check timeout.
+- A komet-node older than komet v0.1.87 is now diagnosed as out of date, both when it rejects the `traceTransaction` request and when it returns the pre-v0.1.87 trace shape.
+- An attach-mode launch (`node.attach`) that finds nothing listening says so, instead of suggesting an install you already have.
+- A failed contract build is classified from its output: a missing Stellar CLI, a missing Rust toolchain, a missing WebAssembly target, and an ordinary compile failure each get their own message and fix.
+- An unreadable `rawTrace` or `wasmPath` names the attribute it came from and why the file could not be read, instead of surfacing a raw `ENOENT`.
+- `stellar-trace` and `stellar-dap` print these messages on their own, without a stack trace in front of them.
+
+### Added
+
+- `node.healthTimeoutMs` sets how long to wait for komet-node to start answering requests (default 60 s).
+
 ## [0.1.0] — 2026-08-21
 
 This is the first public release. The extension debugs Stellar smart contracts written in Rust, in VSCode or from the command line, and it steps backward as readily as forward.

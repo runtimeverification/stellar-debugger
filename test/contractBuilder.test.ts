@@ -3,6 +3,7 @@ import { promises as fs } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { ContractBuilder } from '../src/build/ContractBuilder';
+import { TROUBLESHOOTING_URL, isUserFacing } from '../src/diagnostics/setup';
 import { WASM_HEADER, customSection, wasmModule } from './support/wasmBytes';
 
 const DEPS_REL = path.join('target', 'wasm32v1-none', 'release', 'deps');
@@ -217,5 +218,63 @@ describe('ContractBuilder (unit, temp dirs)', () => {
       const result = await builder.build({ contractDir: dir, buildCommand: 'true' }, () => undefined);
       assert.strictEqual(result, malformed);
     });
+  });
+});
+
+/**
+ * What the user sees when the build cannot run: a missing Stellar CLI, a
+ * missing Rust toolchain or wasm target, and an ordinary compile failure. The
+ * wording lives in src/diagnostics/setup.ts (setupErrors.test.ts asserts it);
+ * these check that a real failed build reaches it, output tail included.
+ */
+describe('ContractBuilder failure diagnostics', () => {
+  const tempDirs: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(tempDirs.splice(0).map((d) => fs.rm(d, { recursive: true, force: true })));
+  });
+
+  async function contractDir(): Promise<string> {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'contract-builder-fail-'));
+    tempDirs.push(dir);
+    return dir;
+  }
+
+  async function buildError(buildCommand: string): Promise<Error> {
+    const dir = await contractDir();
+    try {
+      await new ContractBuilder().build({ contractDir: dir, buildCommand }, () => undefined);
+    } catch (e) {
+      const err = e as Error;
+      assert.ok(isUserFacing(err), `expected a user-facing error, got ${err.name}: ${err.message}`);
+      assert.ok(err.message.includes(TROUBLESHOOTING_URL), `expected the README link in: ${err.message}`);
+      return err;
+    }
+    return assert.fail('expected the build to fail');
+  }
+
+  it('reports a missing `stellar` binary as a missing Stellar CLI', async () => {
+    const err = await buildError('stellar-cli-does-not-exist-4f2a contract build');
+    assert.match(err.message, /stellar-cli-does-not-exist-4f2a/);
+    assert.match(err.message, /stellar\.cliPath|Stellar CLI/i);
+  });
+
+  it('reports a missing wasm target as a `rustup target add`', async () => {
+    const err = await buildError(
+      'printf "error[E0463]: can\'t find crate for \\`core\\`\\nnote: the \\`wasm32v1-none\\` target may not be installed\\n" >&2; exit 101',
+    );
+    assert.match(err.message, /rustup target add wasm32v1-none/);
+  });
+
+  it('reports an ordinary compile failure with its exit code and output tail', async () => {
+    const err = await buildError('printf "error: could not compile \\`token\\`\\n" >&2; exit 101');
+    assert.match(err.message, /code 101/);
+    assert.match(err.message, /could not compile/);
+  });
+
+  it('reports a build that produced no wasm', async () => {
+    const err = await buildError('true');
+    assert.match(err.message, /wasm/);
+    assert.match(err.message, /wasm32v1-none/);
   });
 });

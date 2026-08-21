@@ -183,6 +183,11 @@
                     "type": "number",
                     "markdownDescription": "Per-RPC timeout in milliseconds before a komet-node request is aborted. Defaults to 600000 (10 minutes); raise it for very large contracts that take longer to upload or execute.",
                     "default": 600000
+                  },
+                  "healthTimeoutMs": {
+                    "type": "number",
+                    "markdownDescription": "How long to wait (milliseconds) for komet-node to start answering requests before giving up. Defaults to 60000 (1 minute). A node that cannot be started at all is reported immediately, whatever this is set to.",
+                    "default": 60000
                   }
                 },
                 "default": {}

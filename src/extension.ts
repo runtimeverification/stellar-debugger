@@ -13,6 +13,7 @@ import * as vscode from 'vscode';
 import { SorobanDebugSession } from './debugAdapter/SorobanDebugSession';
 import { backendFor } from './debugAdapter/backendFor';
 import { SorobanLaunchArgs } from './debugAdapter/types';
+import { TROUBLESHOOTING_URL } from './diagnostics/setup';
 
 export function activate(context: vscode.ExtensionContext): void {
   const provider = new SorobanConfigurationProvider();
@@ -55,7 +56,10 @@ class SorobanConfigurationProvider implements vscode.DebugConfigurationProvider 
     applyBinaryPaths(config, folder);
     if (!config.rawTrace && !Array.isArray(config.transactions)) {
       return vscode.window
-        .showErrorMessage('Stellar debug: a `transactions` array (or a `rawTrace` file) is required in the launch configuration.')
+        .showErrorMessage(
+          'Stellar debug: a `transactions` array (or a `rawTrace` file) is required in the launch ' +
+            `configuration. See ${TROUBLESHOOTING_URL}.`,
+        )
         .then(() => undefined);
     }
     return config;
