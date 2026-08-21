@@ -39,6 +39,19 @@ jobs:
       - name: Build
         run: npm run build
 
+      # Guards the allowlist-shaped .vscodeignore. `vsce` packages from the disk,
+      # not from git, so a denylist regression quietly ships the committed wasm
+      # fixtures here — and gigabytes of Rust `target/` output on a dev machine.
+      - name: Package, and check the .vsix stays small
+        run: |
+          npm run package
+          size=$(stat -c%s stellar-debugger.vsix)
+          echo "stellar-debugger.vsix: $size bytes"
+          if [ "$size" -gt 2000000 ]; then
+            echo "::error::the .vsix is $size bytes (> 2 MB) — check .vscodeignore with 'npx vsce ls'"
+            exit 1
+          fi
+
       # The end-to-end tests (test/integration.node.test.ts) run the REAL
       # komet-node — the only way to catch a breaking change in its RPC or trace
       # format. Install it the same way the devcontainer does: Nix + RV's binary

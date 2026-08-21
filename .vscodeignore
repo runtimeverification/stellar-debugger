@@ -1,14 +1,17 @@
-.vscode/**
-.devcontainer/**
-src/**
-test/**
-out/**
-node_modules/**
-.gitignore
-.mocharc.json
-esbuild.js
-tsconfig*.json
-.eslintrc.json
-**/*.map
-**/*.ts
-!dist/**
+# Allowlist-shaped: ignore everything, then add back exactly what the installed
+# extension needs. A denylist is a trap here — `examples/*/target` and
+# `test/fixtures/*/target` are gitignored but still on disk, and `vsce` packages
+# from the disk, not from git.
+**
+
+!dist/extension.js
+!dist/dap-server.js
+!dist/trace.js
+!images/icon.png
+!package.json
+!README.md
+!CHANGELOG.md
+!LICENSE
+
+# Source maps are dev-only (`vscode:prepublish` builds minified, without them).
+dist/**/*.map

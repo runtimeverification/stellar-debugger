@@ -1,10 +1,28 @@
 {
   "name": "stellar-debugger",
   "displayName": "Stellar Debugger",
-  "description": "Time-travel debugger for Stellar/Soroban smart contracts, backed by komet-node",
-  "version": "0.0.1",
+  "description": "Time-travel debugger for Stellar/Soroban smart contracts: step your Rust source forward and backward, backed by komet-node.",
+  "version": "0.1.0",
   "publisher": "runtimeverification",
   "license": "BSD-3-Clause",
+  "preview": true,
+  "icon": "images/icon.png",
+  "galleryBanner": {
+    "color": "#0B1B2B",
+    "theme": "dark"
+  },
+  "keywords": [
+    "stellar",
+    "soroban",
+    "smart contract",
+    "debugger",
+    "time travel",
+    "rust",
+    "webassembly",
+    "wasm",
+    "komet",
+    "blockchain"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/runtimeverification/stellar-debugger.git"
@@ -18,7 +36,8 @@
     "node": ">=22"
   },
   "categories": [
-    "Debuggers"
+    "Debuggers",
+    "Testing"
   ],
   "main": "./dist/extension.js",
   "bin": {
@@ -26,7 +45,8 @@
     "stellar-trace": "dist/trace.js"
   },
   "activationEvents": [
-    "onDebug"
+    "onDebugResolve:stellar",
+    "onCommand:stellar.debug"
   ],
   "contributes": {
     "configuration": {
@@ -234,7 +254,7 @@
     "build": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "check-types": "tsc --noEmit",
-    "lint": "eslint src --ext ts",
+    "lint": "eslint src test --ext ts",
     "clean": "node -e \"require('fs').rmSync('out',{recursive:true,force:true})\"",
     "compile-tests": "npm run clean && tsc -p tsconfig.test.json",
     "pretest": "npm run compile-tests",
@@ -243,7 +263,10 @@
     "coverage": "c8 mocha",
     "precoverage:ci": "npm run compile-tests",
     "coverage:ci": "c8 --check-coverage --lines 92 --branches 87 --functions 96 mocha",
-    "mutation": "stryker run"
+    "mutation": "stryker run",
+    "package": "vsce package --out stellar-debugger.vsix",
+    "publish:vscode": "vsce publish",
+    "publish:openvsx": "ovsx publish"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^14.6.1",
@@ -260,11 +283,13 @@
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
     "@vscode/debugadapter-testsupport": "^1.68.0",
+    "@vscode/vsce": "^3.6.0",
     "c8": "^11.0.0",
     "esbuild": "^0.23.0",
     "eslint": "^8.57.0",
     "fast-check": "^4.9.0",
     "mocha": "^10.7.0",
+    "ovsx": "^0.10.1",
     "typescript": "^5.5.0"
   }
 }
