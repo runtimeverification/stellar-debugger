@@ -42,6 +42,17 @@ Replaying an already-recorded trace needs none of the above — no toolchain, no
 
 The repository ships a [devcontainer](.devcontainer/Dockerfile) with all of it preinstalled if you'd rather not set it up by hand. If something is missing, the debugger says which tool it is and how to get it, and links back to [Troubleshooting](#troubleshooting) below.
 
+### Installing komet-node
+
+komet-node is distributed with [`kup`](https://github.com/runtimeverification/kup), Runtime Verification's package manager, which builds on Nix:
+
+```bash
+curl -L https://kframework.org/install | bash                       # installs kup
+kup install komet-node                                              # kup update komet-node, if already installed
+```
+
+The node and its K semantics are published to Runtime Verification's binary cache, so this downloads prebuilt binaries rather than compiling them; `kup` offers to register the caches that make that work the first time it needs them. `kup list komet-node` reports the installed version and whether a newer one exists.
+
 ## Install
 
 Install **Stellar Debugger** from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=runtimeverification.stellar-debugger), or from the command line:
