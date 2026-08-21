@@ -34,14 +34,23 @@ directions.
 
 To build, deploy, and debug a contract you'll need:
 
-- A Rust toolchain with a wasm target (`wasm32v1-none` or
-  `wasm32-unknown-unknown`)
+- A Rust toolchain with a wasm target (`wasm32v1-none` or `wasm32-unknown-unknown`)
 - The [**Stellar CLI**](https://developers.stellar.org/docs/tools/cli)
-- [**komet-node**](https://github.com/runtimeverification/komet-node), the local
-  Stellar network the debugger runs your contract on
+- [**komet-node**](https://github.com/runtimeverification/komet-node), the local Stellar network the debugger runs your contract on. It must bundle **komet v0.1.87 or newer** — that is a komet-node at or after the commit that bumped to komet v0.1.88 (`7545bd8`); `kup install komet-node` installs the newest. An older build records the previous trace shape, which this extension rejects rather than replaying: a trace it cannot classify would open a session with every state view mysteriously empty.
 
-The extension ships with a [devcontainer](.devcontainer/Dockerfile) that has all
-of this preinstalled if you'd rather not set it up by hand.
+Replaying an already-recorded trace needs none of the above — no toolchain, no network, no komet-node.
+
+The repository ships a [devcontainer](.devcontainer/Dockerfile) with all of it preinstalled if you'd rather not set it up by hand.
+
+## Install
+
+Install **Stellar Debugger** from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=runtimeverification.stellar-debugger), or from the command line:
+
+```bash
+code --install-extension runtimeverification.stellar-debugger
+```
+
+Cursor, Windsurf and VSCodium install the same extension from [Open VSX](https://open-vsx.org/extension/runtimeverification/stellar-debugger).
 
 ## Getting started
 
@@ -49,18 +58,15 @@ of this preinstalled if you'd rather not set it up by hand.
 2. Open your Soroban contract project.
 3. Add a debug configuration (below) and press **F5**.
 
-The bundled [`examples/`](examples/) workspace has several ready-to-run
-contracts and configurations — including offline replays that need no toolchain
-at all — so you can see the debugger working in seconds. See
-[`examples/README.md`](examples/README.md) for a tour.
+To see it working before pointing it at your own code, clone this repository and open its [`examples/`](examples/) workspace: it has several ready-to-run contracts and configurations — including offline replays that need no toolchain at all. See [`examples/README.md`](examples/README.md) for a tour.
 
 ## Usage
 
-Add a `soroban` configuration to your `.vscode/launch.json`. A configuration describes an ordered sequence of transactions run against one fresh local ledger, and names which transaction to trace and debug — the last one by default. This lets you set up whatever state the call under test depends on (deploy other contracts, run a constructor, seed storage) before the transaction you actually want to step through.
+Add a `stellar` configuration to your `.vscode/launch.json`. A configuration describes an ordered sequence of transactions run against one fresh local ledger, and names which transaction to trace and debug — the last one by default. This lets you set up whatever state the call under test depends on (deploy other contracts, run a constructor, seed storage) before the transaction you actually want to step through.
 
 ```jsonc
 {
-  "type": "soroban",
+  "type": "stellar",
   "request": "launch",
   "name": "Debug supply",
   "transactions": [
@@ -118,16 +124,18 @@ An **`invoke`** step calls a function on a deployed handle:
 
 Two substitution tokens are expanded inside string `args` values: `${sourceAddress}` (the source account's address) and `${contract:<id>}` (the deployed address behind a handle).
 
-Two settings let you point at executables that aren't on your `PATH`: `soroban.stellar.path` and `soroban.kometNode.path`. For the full reference — multi-contract systems, every argument shape, and offline replay — see [`docs/debug-config.md`](docs/debug-config.md).
+Two settings let you point at executables that aren't on your `PATH`: `stellar.cliPath` and `stellar.kometNode.path`. For the full reference — multi-contract systems, every argument shape, and offline replay — see [`docs/debug-config.md`](docs/debug-config.md).
 
 ### Beyond the editor
 
 The debugger is also available outside VS Code:
 
-- [**`soroban-trace`**](docs/trace-cli.md) — a one-shot CLI that prints a
+- [**`stellar-trace`**](docs/trace-cli.md) — a one-shot CLI that prints a
   Rust-level execution trace as JSONL, for scripts, CI, and AI agents.
-- [**`soroban-dap`**](docs/dap-cli.md) — the debug adapter served over TCP, so other
+- [**`stellar-dap`**](docs/dap-cli.md) — the debug adapter served over TCP, so other
   editors (nvim-dap, IntelliJ, Emacs) can drive it.
+
+Both are built from this repository rather than installed by the extension: clone it, `npm install && npm run build`, and either run `node dist/trace.js` directly or `npm install -g .` to put `stellar-trace` and `stellar-dap` on your `PATH`.
 
 ## Contributing
 
@@ -135,9 +143,15 @@ Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for how to
 build, run, and test the extension, and for an overview of how it works
 internally.
 
+## Known limitations
+
+- **A trace can stop short of the invocation's end.** komet-node's tracer halts at instructions it cannot decode (it reports them as `unknown`), so depending on codegen some contracts replay only partially. The session opens and steps normally; it just ends earlier than the call did.
+- **Source stepping wants an unoptimized build.** The live pipeline builds with debug info at opt-level 0 for exactly this reason — at higher optimization levels a whole function can collapse onto a single line. See [`docs/stepping.md`](docs/stepping.md).
+- **One transaction per session.** A launch config can run a whole sequence of transactions, but exactly one of them (`trace`) is the one you step through.
+
 ## Roadmap
 
-- A source-level Variables view with inline values
+- Variable values shown inline in the editor, next to your code
 - Column-level breakpoints
 
 ## License

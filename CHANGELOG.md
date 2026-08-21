@@ -1,93 +1,31 @@
 # Changelog
 
-All notable changes to this extension are documented in this file. The format is
-based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
-project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+All notable changes to this extension are documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-08-21
+
+This is the first public release. The extension debugs Stellar smart contracts written in Rust, in VSCode or from the command line, and it steps backward as readily as forward.
+
 ### Added
 
-- **Multi-transaction debug configurations.** A launch config now states an
-  ordered `transactions` sequence of `deploy` / `invoke` steps, run against one
-  accumulating local ledger, with `trace` selecting which of them feeds the
-  session (`"last"` by default, or an index, or a step `id`). Constructors,
-  seeded state and multi-step flows are debuggable, not just a single bare call.
-  Each transaction's status is reported in the debug console, and a step that
-  fails or traps no longer aborts the run — its trace is still fetched and
-  replayed.
-- **Spec-driven arguments.** An invoke's `args` is an object keyed by the
-  function's own parameter names, encoded against the contract's
-  `contractspecv0` spec, so structs, enums, tuples, vecs and maps work without
-  hand-written ScVal type tags. The tokens `${sourceAddress}` and
-  `${contract:<id>}` expand inside string values, wiring a deployed contract's
-  address into a later call.
-- **Just-my-code stepping** (`justMyCode`, default true): source stepping rests
-  only in workspace files, skipping Rust `std`/`core` and crates.io dependency
-  sources. `--no-just-my-code` opts out in the CLI.
-- **Stellar ledger inspection.** A new **Ledger** scope shows the chain state at
-  every step: contract storage across all three durabilities with their TTLs,
-  account balances, the ledger sequence and close time, the executing contract's
-  wasm hash and instance TTL, the host object table, and the open contract-call
-  stack. Values render as Soroban types with `C…`/`G…` addresses, and composites
-  expand. Storage is reconstructed from the trace's own call baselines and write
-  events — including undoing the writes of a sub-call that trapped — so it
-  matches what the contract would read.
-- **WebAssembly globals.** A new **Globals** scope lists the executing module's
-  globals by module-relative index, for traces that carry them.
-- The `soroban-trace` CLI reports the same state per stop as `globals` and
-  `ledger`, with a `changed` flag marking the storage entries that moved since
-  the previous stop, and `hasGlobals`/`hasLedger` announced in `meta`.
-- **A real call stack.** The Callstack view now shows every frame that led to the current line — not one frame named after a wasm instruction. Frame *structure* comes from the trace's own wasm activations, so it is right at any optimization level, and DWARF adds the Rust frames inlining erased: an optimized build still shows `add` → `invoke_raw` → the export wrapper rather than one collapsed function. Outer frames stand on the call they are suspended in, every frame is selectable and shows *its own* locals, wasm stack and Rust variables, and the Disassembly view follows the selected frame. Names come off a precision ladder — DWARF, then the demangled `name` section, then the function index, then the code offset — so a release build with no debug info still gets `control::Control::while_call+0x1a` instead of a bare address, and the trace's contract-call boundaries close the stack as labels at the bottom. Frames the user did not write (Rust `std`/`core`, dependencies) are deemphasized rather than hidden. `soroban-trace` reports the same stack per stop as `frames`.
-- New contributor specs: [`docs/state-inspection.md`](docs/state-inspection.md) (rules G1–G4, L1–L15) and [`docs/callstack.md`](docs/callstack.md) (rules C1–C8), both pinned by the test suite.
+- You can set breakpoints in your Rust source and step through it line by line, inspecting your own variables at every stop.
+- You can step backward. Stepping back, stepping back out of a call, and running backward to the previous breakpoint are all as fast as going forward, so overshooting the bug costs you nothing.
+- The call stack shows every function that led to the current line, including the ones the compiler inlined away. Selecting a frame shows that frame's variables and jumps to its line.
+- Stepping stays in the code you wrote. The debugger steps over Rust standard-library and dependency sources rather than into them, unless you set `justMyCode` to `false`.
+- A launch configuration runs an ordered sequence of deployments and calls against one fresh local network, and names the call you want to debug. You can therefore set up state — run a constructor, deploy a second contract, seed storage — before the call under test.
+- Call arguments are written as JSON, keyed by the parameter names in your contract's own signature. Structs, enums, tuples, vectors and maps all work without encoding anything by hand.
+- The Ledger view shows the chain as your contract sees it at the current step: contract storage with its expiry, account balances, the ledger sequence number and close time, and the contracts currently on the call stack. It travels with you as you step.
+- When you need to go below your source, the debugger also shows WebAssembly locals, the operand stack, globals and linear memory, and VSCode's Disassembly View steps through the instructions themselves in either direction.
+- Debugging a contract takes one keypress. The extension builds it, starts a local network, deploys it, makes the call, and opens the session.
+- A recorded run can be replayed later with no network and no toolchain installed. That makes a saved recording a reproducible bug report you can hand to someone else.
+- Outside the editor, `stellar-trace` prints the execution of a call as JSON lines for use in scripts and CI, and `stellar-dap` serves the debugger over TCP so that editors such as Neovim, IntelliJ and Emacs can drive it.
 
-### Changed
+### Requirements
 
-- The replay cursor's position in the recording moved out of the stack frame's name and into the thread's label (`soroban-vm [29/40]`): a frame name now says what the program is doing, and where the cursor sits is a property of the recorded thread.
-- **The single-invoke launch config is gone.** `contract`, `function`, `args`,
-  `buildCommand` and `debugInfo` no longer sit at the top level: wrap them in a
-  `transactions` array (see [`docs/debug-config.md`](docs/debug-config.md)). A
-  config still using the old shape is rejected with a message pointing at the
-  new one, rather than silently ignored.
-- **Invoke arguments are spec-driven only.** The positional
-  `[{ "type", "value" }]` form is removed, along with the hand-written ScVal
-  encoder behind it; the contract's own spec now decides how each argument
-  encodes. `soroban-trace --args-json` takes the same named object.
-- **Requires komet v0.1.87 or newer.** That release reorganised the trace: every
-  record now names itself with a `kind` field, and the operands that used to ride
-  inside `instr` are named fields of the record. The parser reads that shape and
-  rejects a record without a `kind`, so a trace recorded against an older komet
-  no longer replays — re-record it. Failing loudly is deliberate: a trace this
-  parser cannot classify would otherwise open a session with every state view
-  mysteriously empty.
-- The cross-contract gate no longer relies on komet-node tagging each trace
-  record with the contract executing at it. The adapter folds that out of the
-  `callContract`/`endWasm` boundaries the trace already carries, so nothing needs
-  to be sent per record for it.
+- Debugging a contract requires [komet-node](https://github.com/runtimeverification/komet-node), the local Stellar network that runs it. It must be built with komet v0.1.87 or newer; an older build produces recordings this version cannot open, and says so rather than opening an empty session.
+- Building and deploying a contract also requires a Rust toolchain with a WebAssembly target and the Stellar CLI. Replaying a recording requires neither.
 
-### Fixed
-
-- Debug sessions start ~8 seconds faster: rendering Stellar addresses no longer
-  pulls `@stellar/stellar-sdk` into the debug adapter's module graph (a local
-  strkey encoder replaces it), which had been delaying every session past the
-  DAP handshake timeout.
-- The invocation's return value is reported again in the debug console (and in
-  the CLI's `result` line), read from the trace's own call-exit record; a call
-  that trapped says so.
-- Byte-identical transactions in one run are no longer deduplicated by
-  komet-node into a single execution: every envelope carries its own account
-  sequence, so calling the same function twice with the same arguments really
-  runs twice.
-- DWARF type resolution no longer hangs on malformed debug info containing a
-  cyclic `typedef`/qualifier chain; `stripTypedefs` now terminates on cycles.
-
-[Unreleased]: https://github.com/runtimeverification/stellar-debugger/compare/v0.0.1...HEAD
-
-## [0.0.1]
-
-Initial release: time-travel debugging for Stellar/Soroban smart contracts, with
-Rust source-level and WebAssembly stepping (forward and backward), state
-inspection, a one-click build-deploy-debug pipeline, and offline replay of
-recorded runs.
-
-[0.0.1]: https://github.com/runtimeverification/stellar-debugger/releases/tag/v0.0.1
+[Unreleased]: https://github.com/runtimeverification/stellar-debugger/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/runtimeverification/stellar-debugger/releases/tag/v0.1.0
