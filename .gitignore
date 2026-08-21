@@ -7,6 +7,10 @@ reports/
 *.vsix
 .DS_Store
 *.log
+.env
+.env.*
+# Local checkouts of komet / komet-node / wasm-semantics for dev iteration.
+.deps/
 state.kore
 .claude/
 test/fixtures/sample-contract/target/

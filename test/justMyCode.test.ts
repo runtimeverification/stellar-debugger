@@ -33,18 +33,18 @@ import { TraceRecord } from '../src/komet/trace';
 // ---------------------------------------------------------------------------
 
 /** WORKSPACE — a user contract crate. */
-const WS_LIB = '/home/node/work/rs-lending-xlm/contracts/price-aggregator/src/lib.rs';
+const WS_LIB = '/home/dev/work/lending-pool/contracts/price-aggregator/src/lib.rs';
 /** WORKSPACE — a shared common module in the same tree. */
-const WS_ORACLE = '/home/node/work/rs-lending-xlm/common/src/types/oracle.rs';
+const WS_ORACLE = '/home/dev/work/lending-pool/common/src/types/oracle.rs';
 /** WORKSPACE — a bare relative path (no toolchain marker). */
 const WS_BARE = 'src/lib.rs';
 
 /** NON-WORKSPACE — rustup toolchain std/core source. */
 const FOREIGN_RUSTUP =
-  '/home/node/.rustup/toolchains/1.95-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/result.rs';
+  '/home/dev/.rustup/toolchains/1.95-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/result.rs';
 /** NON-WORKSPACE — a crates.io dependency under the cargo registry. */
 const FOREIGN_CARGO =
-  '/home/node/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-sdk-22.0.0/src/lib.rs';
+  '/home/dev/.cargo/registry/src/index.crates.io-6f17d22bba15001f/soroban-sdk-22.0.0/src/lib.rs';
 /** NON-WORKSPACE — a rustc-embedded std source path. */
 const FOREIGN_RUSTC =
   '/rustc/25ef9e3d85d934b27d9dada2f9dd52b1dc63bb04/library/std/src/panic.rs';
