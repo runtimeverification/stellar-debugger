@@ -62,7 +62,7 @@ describe('normalizeConfig', () => {
   // ------------------------------------------------------------------------
   describe('new transactions schema (happy path)', () => {
     const raw = {
-      type: 'soroban',
+      type: 'stellar',
       request: 'launch',
       transactions: [
         { kind: 'deploy', id: 'pool', wasm: '/abs/pool.wasm' },
@@ -118,7 +118,7 @@ describe('normalizeConfig', () => {
   // ------------------------------------------------------------------------
   describe('trace selector resolution', () => {
     const threeSteps = {
-      type: 'soroban',
+      type: 'stellar',
       request: 'launch',
       transactions: [
         { kind: 'deploy', id: 'a', wasm: '/a.wasm' },
@@ -155,7 +155,7 @@ describe('normalizeConfig', () => {
   describe('validation rejections', () => {
     it('rejects an empty `transactions` array', () => {
       assert.throws(() =>
-        norm({ type: 'soroban', request: 'launch', transactions: [] }),
+        norm({ type: 'stellar', request: 'launch', transactions: [] }),
       );
     });
 
@@ -163,7 +163,7 @@ describe('normalizeConfig', () => {
       assert.throws(
         () =>
           norm({
-            type: 'soroban',
+            type: 'stellar',
             request: 'launch',
             transactions: [
               { kind: 'deploy', id: 'pool', wasm: '/p.wasm' },
@@ -178,7 +178,7 @@ describe('normalizeConfig', () => {
       assert.throws(
         () =>
           norm({
-            type: 'soroban',
+            type: 'stellar',
             request: 'launch',
             transactions: [
               { kind: 'deploy', id: 'dup', wasm: '/a.wasm' },
@@ -192,7 +192,7 @@ describe('normalizeConfig', () => {
     it('rejects a trace index that is out of range', () => {
       assert.throws(() =>
         norm({
-          type: 'soroban',
+          type: 'stellar',
           request: 'launch',
           transactions: [
             { kind: 'deploy', id: 'a', wasm: '/a.wasm' },
@@ -207,7 +207,7 @@ describe('normalizeConfig', () => {
       assert.throws(
         () =>
           norm({
-            type: 'soroban',
+            type: 'stellar',
             request: 'launch',
             transactions: [
               { kind: 'deploy', id: 'a', wasm: '/a.wasm' },
@@ -220,7 +220,7 @@ describe('normalizeConfig', () => {
     });
 
     it('rejects a config with no `transactions` array', () => {
-      assert.throws(() => norm({ type: 'soroban', request: 'launch' }));
+      assert.throws(() => norm({ type: 'stellar', request: 'launch' }));
     });
 
     it('rejects a leftover legacy top-level `function` with a migration error', () => {
@@ -232,7 +232,7 @@ describe('normalizeConfig', () => {
       assert.throws(
         () =>
           norm({
-            type: 'soroban',
+            type: 'stellar',
             request: 'launch',
             function: 'add',
             args: [{ value: 1, type: 'u32' }],
@@ -249,7 +249,7 @@ describe('normalizeConfig', () => {
       assert.throws(
         () =>
           norm({
-            type: 'soroban',
+            type: 'stellar',
             request: 'launch',
             function: 'add',
             transactions: [
@@ -268,7 +268,7 @@ describe('normalizeConfig', () => {
   describe('purity', () => {
     it('is referentially transparent for the same input', () => {
       const raw = {
-        type: 'soroban',
+        type: 'stellar',
         request: 'launch',
         transactions: [
           { kind: 'deploy', id: 'pool', wasm: '/p.wasm' },
@@ -280,7 +280,7 @@ describe('normalizeConfig', () => {
 
     it('does not mutate the input config', () => {
       const raw = {
-        type: 'soroban',
+        type: 'stellar',
         request: 'launch',
         transactions: [
           { kind: 'deploy', id: 'pool', wasm: '/p.wasm' },
@@ -301,7 +301,7 @@ describe('normalizeConfig', () => {
   // ------------------------------------------------------------------------
   describe('optional invoke id + trace-by-invoke-id', () => {
     const raw = {
-      type: 'soroban',
+      type: 'stellar',
       request: 'launch',
       transactions: [
         { kind: 'deploy', id: 'pool', wasm: '/p.wasm' },
@@ -324,7 +324,7 @@ describe('normalizeConfig', () => {
 
     it('leaves an invoke without an `id` as undefined (id is optional)', () => {
       const bare = norm({
-        type: 'soroban',
+        type: 'stellar',
         request: 'launch',
         transactions: [
           { kind: 'deploy', id: 'pool', wasm: '/p.wasm' },
@@ -357,7 +357,7 @@ describe('normalizeConfig', () => {
   describe('deploy build options: buildCommand + debugInfo', () => {
     it('preserves `buildCommand` + `debugInfo` declared on a new-schema deploy step', () => {
       const deploy = norm({
-        type: 'soroban',
+        type: 'stellar',
         request: 'launch',
         transactions: [
           {

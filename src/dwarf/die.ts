@@ -157,3 +157,9 @@ export function dieRef(die: Die, at: number): number | undefined {
   const value = die.attrs.get(at);
   return value && value.kind === 'ref' ? value.value : undefined;
 }
+
+/** The DIE's `at` attribute as a string, when present as one. */
+export function dieString(die: Die, at: number): string | undefined {
+  const value = die.attrs.get(at);
+  return value && value.kind === 'str' ? value.value : undefined;
+}

@@ -15,6 +15,7 @@
 import { BinaryReader } from 'wasmparser';
 import { WasmDisassembler } from 'wasmparser/dist/cjs/WasmDis';
 import { parseWasmSections, WasmFormatError } from './sections';
+import { demangleRust, functionNames, importedFunctionCount } from './names';
 import { renderInstr } from '../komet/mnemonics';
 import { TraceModel } from '../debugAdapter/TraceModel';
 import { FunctionRange } from '../debugAdapter/stops';
@@ -101,12 +102,23 @@ export class Disassembly {
         bytes: bytes.subarray(p.fileOffset, end),
       };
     });
-    const functionRanges = functionBodyOffsets.map(
-      (b): FunctionRange => ({
+    // Body order is function-index order after the imports, so the i-th body is
+    // function index `imported + i` — the index the `name` section keys on.
+    const names = functionNames(bytes);
+    const imported = importedFunctionCount(bytes);
+    const functionRanges = functionBodyOffsets.map((b, i): FunctionRange => {
+      const index = imported + i;
+      const symbol = names.get(index);
+      const range: FunctionRange = {
         start: b.start - codeSection.payloadStart,
         end: b.end - codeSection.payloadStart,
-      }),
-    );
+        index,
+      };
+      if (symbol !== undefined) {
+        range.name = demangleRust(symbol);
+      }
+      return range;
+    });
     return new Disassembly(instructions, functionRanges);
   }
 

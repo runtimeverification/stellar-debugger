@@ -19,7 +19,7 @@ describe('SorobanDebugSession source-level Variables view', () => {
   let dc: DebugClient;
 
   beforeEach(async () => {
-    dc = new DebugClient('node', ADAPTER, 'soroban');
+    dc = new DebugClient('node', ADAPTER, 'stellar');
     await dc.start();
   });
 
@@ -43,9 +43,25 @@ describe('SorobanDebugSession source-level Variables view', () => {
     return res.body.stackFrames[0];
   }
 
-  /** The scopes offered for the current top frame. */
+  /**
+   * The frame whose name contains `part`. The adder fixture is built above
+   * opt-level 0, so `add` survives only as an INLINE frame (docs/callstack.md,
+   * C2) and the parameters of the `#[contractimpl]` wrapper belong to the
+   * wrapper's own frame — which is the one these tests inspect.
+   */
+  async function frameNamed(part: string): Promise<DebugProtocol.StackFrame> {
+    const res = await dc.stackTraceRequest(THREAD);
+    const frame = res.body.stackFrames.find((f) => f.name.includes(part));
+    assert.ok(
+      frame,
+      `no frame named like ${part}; got: ${res.body.stackFrames.map((f) => f.name).join(' | ')}`,
+    );
+    return frame;
+  }
+
+  /** The scopes offered for the frame owning the wrapper's parameters. */
   async function topScopes(): Promise<DebugProtocol.Scope[]> {
-    const frame = await topFrame();
+    const frame = await frameNamed('invoke_raw_extern');
     const res = await dc.scopesRequest({ frameId: frame.id });
     return res.body.scopes;
   }
@@ -99,7 +115,8 @@ describe('SorobanDebugSession source-level Variables view', () => {
     await launchAndStop(NO_WASM);
     // NullVariableResolver reports no functions -> the Variables scope is never
     // prepended, so a trace without DWARF sees exactly [Locals, Value Stack].
-    const names = (await topScopes()).map((s) => s.name);
+    const frame = await topFrame();
+    const names = (await dc.scopesRequest({ frameId: frame.id })).body.scopes.map((s) => s.name);
     assert.deepStrictEqual(names, ['Locals', 'Value Stack']);
   });
 

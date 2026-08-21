@@ -1,6 +1,6 @@
 /**
  * Unit suite for the pure argv parser behind the one-shot trace CLI
- * (`soroban-trace`): --help and argument validation.
+ * (`stellar-trace`): --help and argument validation.
  *
  *   parseTraceArgs(argv): TraceParse   from src/trace/cliArgs.ts
  *   TRACE_USAGE: string                the help text
@@ -51,7 +51,7 @@ describe('parseTraceArgs', () => {
 
     it('TRACE_USAGE carries the documented stable substrings', () => {
       for (const needle of [
-        'soroban-trace',
+        'stellar-trace',
         'Usage',
         '--raw-trace',
         '--wasm',

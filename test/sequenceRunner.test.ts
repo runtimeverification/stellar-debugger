@@ -184,7 +184,7 @@ describe('SequenceRunner', () => {
   // ------------------------------------------------------------------------
   describe('ordered execution + handle registration', () => {
     const raw = {
-      type: 'soroban',
+      type: 'stellar',
       request: 'launch',
       transactions: [
         { kind: 'deploy', id: 'probe', wasm: CTOR_WASM },
@@ -234,7 +234,7 @@ describe('SequenceRunner', () => {
   describe('substitution + spec-driven composite encoding (composite.wasm)', () => {
     it('substitutes both token kinds and spec-encodes the composite Vec<(AssetKey,i128)>', async () => {
       const raw = {
-        type: 'soroban',
+        type: 'stellar',
         request: 'launch',
         transactions: [
           { kind: 'deploy', id: 'pool', wasm: COMPOSITE_WASM },
@@ -284,7 +284,7 @@ describe('SequenceRunner', () => {
         args: { requests: [[{ tag: 'Native' }, '1000']] },
       };
       const raw = {
-        type: 'soroban',
+        type: 'stellar',
         request: 'launch',
         transactions: [
           { kind: 'deploy', id: 'pool', wasm: COMPOSITE_WASM },
@@ -319,7 +319,7 @@ describe('SequenceRunner', () => {
   // ------------------------------------------------------------------------
   describe('no-throw on FAILED + trace still fetched', () => {
     const raw = {
-      type: 'soroban',
+      type: 'stellar',
       request: 'launch',
       transactions: [
         { kind: 'deploy', id: 'pool', wasm: COMPOSITE_WASM },
@@ -356,7 +356,7 @@ describe('SequenceRunner', () => {
     // Two invokes with DISTINCT args (Other 1 / Other 2) so each maps to an
     // identifiable submitted tx; each also carries an `id`.
     const raw = {
-      type: 'soroban',
+      type: 'stellar',
       request: 'launch',
       transactions: [
         { kind: 'deploy', id: 'pool', wasm: COMPOSITE_WASM },
@@ -412,7 +412,7 @@ describe('SequenceRunner', () => {
   // ------------------------------------------------------------------------
   describe('deterministic source account', () => {
     const raw = {
-      type: 'soroban',
+      type: 'stellar',
       request: 'launch',
       transactions: [
         { kind: 'deploy', id: 'pool', wasm: COMPOSITE_WASM },

@@ -2,21 +2,21 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Soroban: Replay add(4, 3) trace",
-      "type": "soroban",
+      "name": "Stellar: Replay add(4, 3) trace",
+      "type": "stellar",
       "request": "launch",
       "rawTrace": "${workspaceFolder}/traces/add.trace.jsonl"
     },
     {
-      "name": "Soroban: Replay add(4, 3) with symbols",
-      "type": "soroban",
+      "name": "Stellar: Replay add(4, 3) with symbols",
+      "type": "stellar",
       "request": "launch",
       "rawTrace": "${workspaceFolder}/../test/fixtures/adder-debug.trace.jsonl",
       "wasmPath": "${workspaceFolder}/../test/fixtures/adder-debug.wasm"
     },
     {
-      "name": "Soroban: Debug store(42)  [live pipeline]",
-      "type": "soroban",
+      "name": "Stellar: Debug store(42)  [live pipeline]",
+      "type": "stellar",
       "request": "launch",
       "transactions": [
         { "kind": "deploy", "id": "greeter", "contract": "${workspaceFolder}/greeter" },
@@ -24,8 +24,8 @@
       ]
     },
     {
-      "name": "Soroban: Debug add(1, 2)  [live pipeline]",
-      "type": "soroban",
+      "name": "Stellar: Debug add(1, 2)  [live pipeline]",
+      "type": "stellar",
       "request": "launch",
       "transactions": [
         { "kind": "deploy", "id": "adder", "contract": "${workspaceFolder}/adder" },
@@ -33,8 +33,8 @@
       ]
     },
     {
-      "name": "Soroban: Debug increment(5)  [live pipeline]",
-      "type": "soroban",
+      "name": "Stellar: Debug increment(5)  [live pipeline]",
+      "type": "stellar",
       "request": "launch",
       "transactions": [
         { "kind": "deploy", "id": "increment", "contract": "${workspaceFolder}/increment" },
@@ -42,29 +42,29 @@
       ]
     },
     {
-      "name": "Soroban: Replay control while_call(3) with symbols",
-      "type": "soroban",
+      "name": "Stellar: Replay control while_call(3) with symbols",
+      "type": "stellar",
       "request": "launch",
       "rawTrace": "${workspaceFolder}/../test/fixtures/control-while_call.trace.jsonl",
       "wasmPath": "${workspaceFolder}/../test/fixtures/control-debug.wasm"
     },
     {
-      "name": "Soroban: Replay control count(3) with symbols",
-      "type": "soroban",
+      "name": "Stellar: Replay control count(3) with symbols",
+      "type": "stellar",
       "request": "launch",
       "rawTrace": "${workspaceFolder}/../test/fixtures/control-count.trace.jsonl",
       "wasmPath": "${workspaceFolder}/../test/fixtures/control-debug.wasm"
     },
     {
-      "name": "Soroban: Replay control branch(3) with symbols",
-      "type": "soroban",
+      "name": "Stellar: Replay control branch(3) with symbols",
+      "type": "stellar",
       "request": "launch",
       "rawTrace": "${workspaceFolder}/../test/fixtures/control-branch.trace.jsonl",
       "wasmPath": "${workspaceFolder}/../test/fixtures/control-debug.wasm"
     },
     {
-      "name": "Soroban: Debug control while_call(3)  [live pipeline]",
-      "type": "soroban",
+      "name": "Stellar: Debug control while_call(3)  [live pipeline]",
+      "type": "stellar",
       "request": "launch",
       "transactions": [
         { "kind": "deploy", "id": "control", "contract": "${workspaceFolder}/control" },

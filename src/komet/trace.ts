@@ -57,9 +57,27 @@
  */
 
 import { TraceParseError } from './traceError';
+import { staleKometTraceMessage } from '../diagnostics/setup';
 import { isEvenLengthHex, parseTraceEvent, TraceEvent } from './traceEvents';
 
 export { TraceParseError } from './traceError';
+
+/**
+ * A trace recorded before komet v0.1.87, whose records carry no `kind`. It is a
+ * `TraceParseError` (existing handlers keep working) with a user-facing message
+ * (the cause is a stale komet-node, not a corrupt file), which is exactly the
+ * combination that stops this failure from reading as "the repo is broken" —
+ * a diagnosis that has cost real debugging time before.
+ */
+export class StaleTraceError extends TraceParseError {
+  readonly userFacing = true;
+
+  constructor(detail: string) {
+    super(staleKometTraceMessage(detail));
+    this.name = 'StaleTraceError';
+  }
+}
+
 export type {
   TraceEvent,
   TraceAddress,
@@ -148,6 +166,12 @@ export function toTraceRecord(value: unknown, lineNo: number): TraceRecord {
 
   const kind = obj.kind;
   if (typeof kind !== 'string' || kind === '') {
+    // A record that otherwise looks like a trace record, but has no `kind`, is
+    // the pre-v0.1.87 shape rather than a malformed line: say so, because the
+    // fix is `kup install komet-node`, not a bug report.
+    if ('instr' in obj || 'pos' in obj) {
+      throw new StaleTraceError(`record ${lineNo} has no \`kind\` field`);
+    }
     reject("'kind' must be a non-empty string");
   }
   const isInstruction = kind === 'instr';

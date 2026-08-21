@@ -91,6 +91,21 @@ export class DwarfSourceMapper implements SourceMapper {
     return this.mapEntry(this.lineTable.lookup(codeOffset));
   }
 
+  locationForFile(filePath: string, line: number, column?: number): MappedLocation | null {
+    if (line <= 0) {
+      return null; // DWARF line 0 is compiler-generated code with no source line.
+    }
+    const normalized = path.normalize(filePath);
+    if (!this.cachedExists(normalized)) {
+      return null;
+    }
+    const loc: MappedLocation = { path: normalized, line };
+    if (column !== undefined && column > 0) {
+      loc.column = column;
+    }
+    return loc;
+  }
+
   resolveBreakpoint(requestedPath: string, line: number): ResolvedBreakpoint | null {
     const file = this.executedByFile.get(path.normalize(requestedPath));
     if (!file) {
@@ -118,14 +133,12 @@ export class DwarfSourceMapper implements SourceMapper {
 
   sourceTextForIndex(index: number): string | null {
     const loc = this.locations[index] ?? null;
-    if (loc === null) {
-      return null;
-    }
-    const lines = this.cachedLines(loc.path);
-    if (lines === null) {
-      return null;
-    }
-    return lines[loc.line - 1] ?? null;
+    return loc === null ? null : this.sourceTextAt(loc.path, loc.line);
+  }
+
+  sourceTextAt(filePath: string, line: number): string | null {
+    const lines = this.cachedLines(path.normalize(filePath));
+    return lines === null ? null : lines[line - 1] ?? null;
   }
 
   /** Read and split a source file once per normalized path; null on failure. */

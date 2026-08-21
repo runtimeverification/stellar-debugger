@@ -118,7 +118,12 @@ export function buildDebugArtifacts(
   const table = readLineTable(wasm, report);
   const source =
     table === null ? new NullSourceMapper() : new DwarfSourceMapper(model, table, positions);
-  return { source, variables: resolveVariables(wasm, report), disassembly, positions };
+  return {
+    source,
+    variables: resolveVariables(wasm, table, report),
+    disassembly,
+    positions,
+  };
 }
 
 /**
@@ -163,16 +168,22 @@ function readLineTable(wasm: Uint8Array, report: ProgressReporter): DwarfLineTab
 }
 
 /**
- * Resolve the source-level variable resolver from the wasm bytes, in its own
- * INDEPENDENT try/catch so a variable-resolution failure never disables the
- * line table (callers have already committed their SourceMapper by this point).
- * Degrades to a NullVariableResolver — the wasm-level variables view.
+ * Resolve the source-level variable/frame resolver from the wasm bytes, in its
+ * own INDEPENDENT try/catch so a resolution failure never disables the line
+ * table (callers have already committed their SourceMapper by this point).
+ * Degrades to a NullVariableResolver — the wasm-level variables and frames view.
  */
-function resolveVariables(wasm: Uint8Array, report: ProgressReporter): VariableResolver {
+function resolveVariables(
+  wasm: Uint8Array,
+  table: DwarfLineTable | null,
+  report: ProgressReporter,
+): VariableResolver {
   try {
     const dwarf = DwarfDebugInfo.fromWasm(wasm);
     if (dwarf && dwarf.scopes.hasFunctions()) {
-      return new DwarfVariableResolver(dwarf);
+      // The line table is what turns an inlined call site's file INDEX into a
+      // path; passing it here is why inline frames can report a source location.
+      return new DwarfVariableResolver(dwarf, table ?? undefined);
     }
   } catch (err) {
     if (err instanceof DwarfParseError || err instanceof WasmFormatError) {

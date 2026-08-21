@@ -12,7 +12,7 @@ import { VariableResolver } from '../sourcemap/VariableResolver';
 import { Disassembly } from '../wasm/Disassembly';
 import { TxStep, TraceSelector } from '../pipeline/config';
 
-/** Attributes of a `soroban` launch configuration (mirrors package.json). */
+/** Attributes of a `stellar` launch configuration (mirrors package.json). */
 export interface SorobanLaunchArgs extends DebugProtocol.LaunchRequestArguments {
   /**
    * The ordered transaction sequence (deploy / invoke steps) to run. Build
@@ -40,6 +40,12 @@ export interface SorobanLaunchArgs extends DebugProtocol.LaunchRequestArguments 
      * longer to upload/execute.
      */
     timeoutMs?: number;
+    /**
+     * How long (ms) to wait for the node to answer `getHealth` before giving up
+     * with a diagnosis. Defaults to 60s. A node that fails to spawn or exits
+     * during boot is reported at once regardless of this deadline.
+     */
+    healthTimeoutMs?: number;
   };
   /** Optional source account secret; a fresh account is seeded if omitted. */
   sourceSecret?: string;

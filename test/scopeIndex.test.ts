@@ -11,6 +11,9 @@ import {
   DW_TAG_formal_parameter,
   DW_TAG_variable,
   DW_TAG_lexical_block,
+  DW_TAG_inlined_subroutine,
+  DW_TAG_namespace,
+  DW_TAG_structure_type,
   DW_AT_name,
   DW_AT_low_pc,
   DW_AT_high_pc,
@@ -18,6 +21,13 @@ import {
   DW_AT_location,
   DW_AT_type,
   DW_AT_frame_base,
+  DW_AT_stmt_list,
+  DW_AT_call_file,
+  DW_AT_call_line,
+  DW_AT_call_column,
+  DW_AT_abstract_origin,
+  DW_AT_specification,
+  DW_AT_linkage_name,
 } from '../src/dwarf/constants';
 
 const FIXTURES = path.join(__dirname, '..', '..', 'test', 'fixtures');
@@ -340,7 +350,182 @@ describe('dwarf/ScopeIndex', () => {
       const hit = scope.functionAt(0x410);
       assert.ok(hit, 'the anonymous subprogram is still located by range');
       assert.strictEqual(hit.name, undefined, 'it genuinely has no DIE name');
+      assert.strictEqual(hit.qualifiedName, undefined, 'no name, nothing to qualify');
       assert.strictEqual(scope.functionNameAt(0x410), 'wasm_func_1040');
+    });
+  });
+
+  // --- Frames: qualified names and inlined instances (docs/callstack.md) ----
+
+  describe('qualifiedName (docs/callstack.md C4)', () => {
+    it('prefixes the DIE name with its enclosing namespaces and types', () => {
+      const fn = die(730, DW_TAG_subprogram, [
+        [DW_AT_name, str('bump')],
+        [DW_AT_low_pc, uint(0x10)],
+        [DW_AT_high_pc, uint(0x10)],
+      ]);
+      const impl = die(720, DW_TAG_structure_type, [[DW_AT_name, str('Control')]], [fn]);
+      const ns = die(710, DW_TAG_namespace, [[DW_AT_name, str('control')]], [impl]);
+      const cu = die(700, DW_TAG_compile_unit, [], [ns]);
+      const scope = new ScopeIndex(debugInfoOf(cu));
+
+      assert.strictEqual(scope.functionAt(0x14)?.qualifiedName, 'control::Control::bump');
+      // The bare name is unchanged — it is what `functionNameAt` reports.
+      assert.strictEqual(scope.functionNameAt(0x14), 'bump');
+    });
+
+    it('ignores an unnamed enclosing scope rather than emitting an empty segment', () => {
+      const fn = die(830, DW_TAG_subprogram, [
+        [DW_AT_name, str('f')],
+        [DW_AT_low_pc, uint(0x10)],
+        [DW_AT_high_pc, uint(0x10)],
+      ]);
+      const anonymous = die(820, DW_TAG_namespace, [], [fn]);
+      const cu = die(800, DW_TAG_compile_unit, [], [anonymous]);
+      assert.strictEqual(new ScopeIndex(debugInfoOf(cu)).functionAt(0x10)?.qualifiedName, 'f');
+    });
+  });
+
+  describe('inlineScopesAt (docs/callstack.md C2)', () => {
+    /**
+     * `outer` (0x100..0x1ff) contains an inlined `middle` (0x110..0x11f) which
+     * itself contains an inlined `inner` (0x118..0x11b). `middle` declares `m`.
+     */
+    function nested(): ScopeIndex {
+      const inner = die(940, DW_TAG_inlined_subroutine, [
+        [DW_AT_name, str('inner')],
+        [DW_AT_low_pc, uint(0x118)],
+        [DW_AT_high_pc, uint(0x4)],
+        [DW_AT_call_file, uint(2)],
+        [DW_AT_call_line, uint(77)],
+        [DW_AT_call_column, uint(9)],
+      ]);
+      const m = die(935, DW_TAG_variable, [[DW_AT_name, str('m')], [DW_AT_location, block(0x91, 0x10)]]);
+      const middle = die(
+        930,
+        DW_TAG_inlined_subroutine,
+        [
+          [DW_AT_name, str('middle')],
+          [DW_AT_low_pc, uint(0x110)],
+          [DW_AT_high_pc, uint(0x10)],
+          [DW_AT_call_file, uint(1)],
+          [DW_AT_call_line, uint(42)],
+        ],
+        [m, inner],
+      );
+      const outer = die(
+        920,
+        DW_TAG_subprogram,
+        [
+          [DW_AT_name, str('outer')],
+          [DW_AT_low_pc, uint(0x100)],
+          [DW_AT_high_pc, uint(0x100)],
+          [DW_AT_frame_base, block(0xed, 0x00, 0x00)],
+        ],
+        [middle],
+      );
+      const cu = die(900, DW_TAG_compile_unit, [[DW_AT_stmt_list, uint(64)]], [outer]);
+      return new ScopeIndex(debugInfoOf(cu));
+    }
+
+    it('reports the covering instances outermost first, with their call sites', () => {
+      const scopes = nested().inlineScopesAt(0x119);
+      assert.deepStrictEqual(
+        scopes.map((s) => [s.name, s.callFileIndex, s.callLine, s.callColumn]),
+        [
+          ['middle', 1, 42, undefined],
+          ['inner', 2, 77, 9],
+        ],
+      );
+      // Every instance names the line program its call file index belongs to.
+      assert.deepStrictEqual(scopes.map((s) => s.stmtListOffset), [64, 64]);
+    });
+
+    it('reports only the instances whose own range covers the pc', () => {
+      const index = nested();
+      assert.deepStrictEqual(
+        index.inlineScopesAt(0x112).map((s) => s.name),
+        ['middle'],
+      );
+      assert.deepStrictEqual(index.inlineScopesAt(0x150), []);
+      // Outside every function there is nothing to expand.
+      assert.deepStrictEqual(index.inlineScopesAt(0x900), []);
+    });
+
+    it('gives each instance its OWN declarations, with the frame base threaded in', () => {
+      const scopes = nested().inlineScopesAt(0x119);
+      const middle = scopes[0];
+      assert.deepStrictEqual(middle.variables.map((v) => v.name), ['m']);
+      assert.ok(middle.variables[0].frameBaseExpr, 'the enclosing frame base must be threaded in');
+      // `m` belongs to `middle`, not to the deeper instance…
+      assert.deepStrictEqual(scopes[1].variables, []);
+      // …and not to the enclosing function either, which never descends into an
+      // inlined instance.
+      assert.deepStrictEqual(nested().variablesInScope(0x119), []);
+    });
+
+    it('skips an instance with no readable range instead of placing it anywhere', () => {
+      // No low_pc/high_pc and no ranges: the instance cannot be placed, and a
+      // guessed frame would misreport the program (C2).
+      const rangeless = die(1030, DW_TAG_inlined_subroutine, [[DW_AT_name, str('nowhere')]]);
+      // A tombstoned instance is dropped for the same reason.
+      const tombstoned = die(1035, DW_TAG_inlined_subroutine, [
+        [DW_AT_name, str('dropped')],
+        [DW_AT_low_pc, uint(0xffffffff)],
+        [DW_AT_high_pc, uint(0x10)],
+      ]);
+      const fn = die(
+        1020,
+        DW_TAG_subprogram,
+        [
+          [DW_AT_name, str('host')],
+          [DW_AT_low_pc, uint(0x10)],
+          [DW_AT_high_pc, uint(0x10)],
+        ],
+        [rangeless, tombstoned],
+      );
+      const cu = die(1000, DW_TAG_compile_unit, [], [fn]);
+      assert.deepStrictEqual(new ScopeIndex(debugInfoOf(cu)).inlineScopesAt(0x14), []);
+    });
+
+    it('resolves the name through abstract_origin, specification, and linkage_name', () => {
+      // rustc points an instance at an abstract subprogram that carries only a
+      // DW_AT_specification, whose declaration holds the name. Nothing else does.
+      const declaration = die(1140, DW_TAG_subprogram, [[DW_AT_name, str('wrapping_add')]]);
+      const abstract = die(1130, DW_TAG_subprogram, [[DW_AT_specification, ref(1140)]]);
+      const mangledOnly = die(1150, DW_TAG_subprogram, [
+        [DW_AT_linkage_name, str('_ZN4core3fmt5writeE')],
+      ]);
+      const instance = die(1160, DW_TAG_inlined_subroutine, [
+        [DW_AT_abstract_origin, ref(1130)],
+        [DW_AT_low_pc, uint(0x10)],
+        [DW_AT_high_pc, uint(0x8)],
+      ]);
+      const mangledInstance = die(1170, DW_TAG_inlined_subroutine, [
+        [DW_AT_abstract_origin, ref(1150)],
+        [DW_AT_low_pc, uint(0x18)],
+        [DW_AT_high_pc, uint(0x8)],
+      ]);
+      const nameless = die(1180, DW_TAG_inlined_subroutine, [
+        [DW_AT_low_pc, uint(0x20)],
+        [DW_AT_high_pc, uint(0x8)],
+      ]);
+      const fn = die(
+        1120,
+        DW_TAG_subprogram,
+        [
+          [DW_AT_name, str('host')],
+          [DW_AT_low_pc, uint(0x10)],
+          [DW_AT_high_pc, uint(0x20)],
+        ],
+        [instance, mangledInstance, nameless],
+      );
+      const cu = die(1100, DW_TAG_compile_unit, [], [fn, declaration, abstract, mangledOnly]);
+      const index = new ScopeIndex(debugInfoOf(cu));
+
+      assert.strictEqual(index.inlineScopesAt(0x12)[0].name, 'wrapping_add');
+      assert.strictEqual(index.inlineScopesAt(0x1a)[0].name, '_ZN4core3fmt5writeE');
+      assert.strictEqual(index.inlineScopesAt(0x22)[0].name, undefined);
     });
   });
 });

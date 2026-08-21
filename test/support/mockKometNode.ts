@@ -23,6 +23,12 @@ export interface MockOptions {
   delayMs?: number;
   /** If set, delay ONLY responses for this method; if unset, delay all. */
   delayMethod?: string;
+  /**
+   * Answer one method with a JSON-RPC error instead of a result — e.g. the
+   * `-32601 Method not found` an older komet-node returns for
+   * `traceTransaction`.
+   */
+  errorFor?: { method: string; code: number; message: string };
 }
 
 export class MockKometNode {
@@ -68,6 +74,15 @@ export class MockKometNode {
         const msg = JSON.parse(body);
         id = msg.id;
         this.received.push({ method: msg.method, params: msg.params ?? {} });
+        const failure = this.opts.errorFor;
+        if (failure && failure.method === msg.method) {
+          this.send(res, {
+            jsonrpc: '2.0',
+            id,
+            error: { code: failure.code, message: failure.message },
+          });
+          return;
+        }
         const result = this.dispatch(msg.method);
         const res_ = { jsonrpc: '2.0', id, result };
         if (

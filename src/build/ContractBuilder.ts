@@ -12,6 +12,7 @@ import { spawn } from 'child_process';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import { ProgressReporter } from '../debugAdapter/types';
+import { buildFailure, buildSpawnFailure, noWasmProduced } from '../diagnostics/setup';
 import { parseWasmSections } from '../wasm/sections';
 
 const TARGET_DIRS = ['wasm32v1-none', 'wasm32-unknown-unknown'];
@@ -32,12 +33,22 @@ export interface BuildOptions {
   debugInfo?: boolean;
 }
 
+/**
+ * A build that could not produce a wasm. The message is written for the user by
+ * `diagnostics/setup` — a missing Stellar CLI, a missing Rust toolchain or wasm
+ * target, or the build's own output — so callers can surface it verbatim.
+ */
 export class ContractBuildError extends Error {
+  readonly userFacing = true;
+
   constructor(message: string) {
     super(message);
     this.name = 'ContractBuildError';
   }
 }
+
+/** How many trailing output lines are kept to explain a failed build. */
+const OUTPUT_TAIL_LINES = 40;
 
 export class ContractBuilder {
   async build(opts: BuildOptions, report: ProgressReporter): Promise<string> {
@@ -54,7 +65,7 @@ export class ContractBuilder {
       : process.env;
     await this.run(command, opts.contractDir, env, report);
 
-    const wasm = await this.findWasm(opts.contractDir);
+    const wasm = await this.findWasm(opts.contractDir, command);
     report(`Built wasm: ${wasm}`);
     if (debugInfo) {
       await this.warnIfMissingDebugLine(wasm, report);
@@ -62,17 +73,37 @@ export class ContractBuilder {
     return wasm;
   }
 
+  /**
+   * Run the build command, streaming its output to the console and keeping the
+   * tail. A non-zero exit is classified into a user-facing diagnosis (missing
+   * CLI, missing toolchain, missing wasm target, or a plain compile failure) by
+   * `diagnostics/setup`, which is why the tail is collected at all: the exit
+   * code alone cannot tell those apart.
+   */
   private run(command: string, cwd: string, env: NodeJS.ProcessEnv, report: ProgressReporter): Promise<void> {
     return new Promise((resolve, reject) => {
       const child = spawn(command, { cwd, env, shell: true });
-      child.stdout.on('data', (d) => report(d.toString().trimEnd()));
-      child.stderr.on('data', (d) => report(d.toString().trimEnd()));
-      child.on('error', (err) => reject(new ContractBuildError(`failed to run '${command}': ${err.message}`)));
-      child.on('close', (code) => {
+      const output: string[] = [];
+      const onOutput = (chunk: Buffer) => {
+        const text = chunk.toString().trimEnd();
+        report(text);
+        output.push(text);
+        if (output.length > OUTPUT_TAIL_LINES) {
+          output.splice(0, output.length - OUTPUT_TAIL_LINES);
+        }
+      };
+      child.stdout.on('data', onOutput);
+      child.stderr.on('data', onOutput);
+      child.on('error', (err) =>
+        reject(new ContractBuildError(buildSpawnFailure({ command, error: err }).message)),
+      );
+      child.on('close', (code, signal) => {
         if (code === 0) {
           resolve();
         } else {
-          reject(new ContractBuildError(`build command exited with code ${code}`));
+          reject(
+            new ContractBuildError(buildFailure({ command, cwd, code, signal, output }).message),
+          );
         }
       });
     });
@@ -86,7 +117,7 @@ export class ContractBuilder {
    * (and the name section). Fall back to `release/*.wasm` only when `deps/`
    * has no wasm at all.
    */
-  private async findWasm(contractDir: string): Promise<string> {
+  private async findWasm(contractDir: string, command: string): Promise<string> {
     const depsCandidates: { path: string; mtimeMs: number }[] = [];
     const releaseCandidates: { path: string; mtimeMs: number }[] = [];
     for (const target of TARGET_DIRS) {
@@ -96,9 +127,7 @@ export class ContractBuilder {
     }
     const candidates = depsCandidates.length > 0 ? depsCandidates : releaseCandidates;
     if (candidates.length === 0) {
-      throw new ContractBuildError(
-        `no wasm found under ${contractDir}/target/{${TARGET_DIRS.join(',')}}/release after build`,
-      );
+      throw new ContractBuildError(noWasmProduced({ contractDir, command }).message);
     }
     candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
     return candidates[0].path;

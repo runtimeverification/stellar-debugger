@@ -7,7 +7,7 @@
 > test-first convention and how to regenerate fixtures, and a tour of how the
 > trace-replay adapter works internally (architecture map included).
 
-Thanks for your interest in improving the Soroban Debugger! This document covers
+Thanks for your interest in improving the Stellar Debugger! This document covers
 how to get a development environment running and the conventions we follow.
 
 ## Development setup
@@ -37,8 +37,9 @@ npm install
 npm run build        # bundle to dist/extension.js (esbuild)
 npm run watch        # rebuild on change
 npm run check-types  # tsc --noEmit
-npm run lint         # eslint
+npm run lint         # eslint over src and test
 npm test             # recompile src+test to out/, then mocha (~4 min)
+npm run package      # build a .vsix (vsce) — see the release section below
 ```
 
 `npm test` clears `out/` before compiling: `tsc` leaves the output of a deleted
@@ -49,6 +50,20 @@ Press **F5** (*Run Extension*) to open an Extension Development Host with the
 extension loaded and the [`examples/`](examples/) workspace open. Pick a
 configuration from the Run and Debug view — the **Replay … with symbols**
 configs need no toolchain at all.
+
+## Releasing
+
+Releases are driven by a tag, and [`.github/workflows/release.yml`](.github/workflows/release.yml) does the rest:
+
+1. Move the CHANGELOG's `[Unreleased]` entries under a new version heading with today's date, and update the link definitions at the bottom.
+2. Bump `version` in `package.json` (the workflow refuses to publish a tag that disagrees with it).
+3. Merge that, then `git tag v<version> && git push origin v<version>` on a commit that is already green on CI — CI, not the release workflow, is what runs the real `komet-node` end-to-end suite.
+
+The workflow then packages the `.vsix`, publishes it to the VS Code Marketplace and to [Open VSX](https://open-vsx.org) (which is where Cursor, Windsurf and VSCodium install from), and attaches it to a GitHub release. It needs two repository secrets, `VSCE_PAT` and `OVSX_PAT`.
+
+`.vscodeignore` is written as an allowlist — ignore everything, then add back `dist/`, the icon, and the four metadata files. Keep it that way: `examples/*/target` and `test/fixtures/*/target` are gitignored but still sit on disk, and `vsce` packages from the disk, so a denylist eventually ships gigabytes of Rust build output. Check with `npx vsce ls` after touching it.
+
+The pinned ESLint 8 is end-of-life. It is a dev-only dependency that never reaches the `.vsix`, so the migration to ESLint 9's flat config is deliberately a post-release chore rather than release-blocking work.
 
 ## Testing conventions
 
@@ -143,8 +158,11 @@ debugAdapter/
                         records, call depths, statement stops (shared with the CLI)
   replayCursor.ts       the stepping engine — every forward/reverse move and the
                         breakpoint resolution, as cursor moves over a StopModel
-  stops.ts              the pure derivations stopModel is built from (depths,
-                        line runs, S17/S18/S21 stop filtering)
+  stops.ts              the pure derivations stopModel is built from (wasm frame
+                        stacks + depths, line runs, S17/S18/S21 stop filtering)
+  callStack.ts          the frames both front ends show: wasm activations, the
+                        Rust frames inlining erased, contract boundaries
+                        (docs/callstack.md)
   TraceModel            records + replay cursor; owns the two state images below,
                         built lazily and shared by every consumer
   MemoryImage           linear memory at a cursor (snapshot-on-change index)
@@ -181,17 +199,21 @@ soroban/strkey.ts       raw address bytes -> C…/G… strkey (SDK-free: the SDK
                         the DAP handshake)
 wasm/
   sections.ts           wasm section walker (offsets, custom-section lookup)
+  names.ts              the `name` section + Rust demangling: how a frame is
+                        labelled when the build carries no DWARF
   Disassembly.ts        static disassembly (wasmparser), code-offset addressed
 dwarf/                  DWARF v4/v5 .debug_line/.debug_info parser -> LineTable
 sourcemap/
   SourceMapper          the mapping seam the adapter talks to
   DwarfSourceMapper     trace index / code offset -> Rust file:line (+ breakpoints)
   NullSourceMapper      no-DWARF fallback (disassembly-only)
+  VariableResolver      the source-level view of a pc: enclosing function, inlined
+                        frames, in-scope variables, decoded values
 ```
 
 All replay logic is free of the `vscode` API, so it can be unit-tested in plain
 Node; the `vscode`-only glue lives in `extension.ts`. For a deep dive on the
-stepping model, see [`docs/stepping.md`](docs/stepping.md).
+stepping model, see [`docs/stepping.md`](docs/stepping.md); for the frame model behind the Callstack view, see [`docs/callstack.md`](docs/callstack.md).
 
 ## Pull requests
 

@@ -8,7 +8,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-soroban-sdk = "22.0.0"
+soroban-sdk = "27.0.6"
 
 # Mirrors the other examples' production profile. The debugger builds this with
 # CARGO_PROFILE_RELEASE_OPT_LEVEL=0 injected (see ContractBuilder), which is what

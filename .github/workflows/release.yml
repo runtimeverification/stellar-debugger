@@ -1,0 +1,87 @@
+name: Release
+
+# Publishing is driven by a tag: `git tag v0.1.0 && git push origin v0.1.0`.
+# The tagged commit must already be green on CI (which is what runs the real
+# komet-node end-to-end suite); this workflow builds, packages, and publishes.
+on:
+  push:
+    tags: ['v*']
+  # Allow a dry run that packages and uploads the .vsix without publishing.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # A tag that disagrees with package.json would publish the wrong version
+      # to the marketplace under a name nobody can correct later.
+      - name: Check the tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          manifest="$(node -p "require('./package.json').version")"
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$manifest" != "$tag" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $manifest"
+            exit 1
+          fi
+
+      - name: Type-check
+        run: npm run check-types
+
+      - name: Lint
+        run: npm run lint
+
+      # The real-komet-node e2e suite already ran on this commit in CI; opt out
+      # of it here (its own documented escape hatch) rather than spending ten
+      # minutes reinstalling Nix and the K semantics to re-prove the same thing.
+      - name: Test (without the real-node e2e suite)
+        run: npm test
+        env:
+          KOMET_NODE_E2E: '0'
+
+      - name: Package
+        run: npm run package
+
+      - name: Upload the .vsix as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: stellar-debugger-vsix
+          path: stellar-debugger.vsix
+
+      - name: Publish to the VS Code Marketplace
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx vsce publish --packagePath stellar-debugger.vsix
+
+      # Cursor, Windsurf and VSCodium install from Open VSX, not from the
+      # Microsoft marketplace, so a release that skips this is invisible to them.
+      - name: Publish to Open VSX
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: npx ovsx publish stellar-debugger.vsix
+
+      - name: Create the GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes "See [CHANGELOG.md](https://github.com/runtimeverification/stellar-debugger/blob/$GITHUB_REF_NAME/CHANGELOG.md)." \
+            stellar-debugger.vsix

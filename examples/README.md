@@ -1,13 +1,13 @@
-# Soroban Debugger — example workspace
+# Stellar Debugger — example workspace
 
-> **Audience:** `new user` · `soroban developer` (getting started)
+> **Audience:** `new user` · `stellar contract developer` (getting started)
 >
 > **TL;DR:** A guided tour of the ready-to-run example contracts and launch
 > configs. Start with the zero-dependency **Replay … with symbols** configs to
 > see source-level, forward-and-backward debugging in seconds — no toolchain
 > needed — then graduate to the full build-and-run pipeline.
 
-This folder is a **self-contained example workspace** for the Soroban Debugger
+This folder is a **self-contained example workspace** for the Stellar Debugger
 (komet) extension. Pressing **F5** ("Run Extension") in the extension repo opens
 this folder in an Extension Development Host with the extension already loaded,
 so you have a real Soroban project to debug immediately.
@@ -39,21 +39,21 @@ Each contract is an independent crate (its own `Cargo.toml`/`Cargo.lock`/
 
 Open the Run and Debug view and pick a config from `.vscode/launch.json`:
 
-1. **Soroban: Replay add(4, 3) with symbols** — zero dependencies. Replays the
+1. **Stellar: Replay add(4, 3) with symbols** — zero dependencies. Replays the
    bundled trace together with its matching debug wasm: stack frames open
    `adder/src/lib.rs`, breakpoints verify on Rust lines (sliding forward to the
    nearest executed line), stepping is statement-granular, and right-clicking
    the stack frame offers **Open Disassembly View** (annotated wasm,
    instruction breakpoints, instruction-granular stepping — also backwards).
    Start here.
-2. **Soroban: Replay add(4, 3) trace** — the same trace without the wasm: the
+2. **Stellar: Replay add(4, 3) trace** — the same trace without the wasm: the
    no-DWARF fallback. Frames carry only an instruction pointer; you debug in
    the Disassembly View.
-3. **Soroban: Replay control while_call(3) / count(3) / branch(3) with symbols**
+3. **Stellar: Replay control while_call(3) / count(3) / branch(3) with symbols**
    — zero-dependency replays of the control fixtures, one per Rust construct:
    step into `bump` and back out of a `while` loop, watch a `for` body stop once
    per iteration, or see an `if`/`else` enter only the taken arm.
-4. **Soroban: Debug store(42) / add(1, 2) / increment(5) / control while_call(3)**
+4. **Stellar: Debug store(42) / add(1, 2) / increment(5) / control while_call(3)**
    — the full turnkey pipeline: builds the crate **with DWARF debug info at
    opt-level 0** (the extension injects `CARGO_PROFILE_RELEASE_DEBUG=true` /
    `CARGO_PROFILE_RELEASE_STRIP=none` / `CARGO_PROFILE_RELEASE_OPT_LEVEL=0`; no
@@ -75,9 +75,9 @@ then add a launch config whose `transactions` deploy it and invoke a function:
 
 ```jsonc
 {
-  "type": "soroban",
+  "type": "stellar",
   "request": "launch",
-  "name": "Soroban: Debug my_fn",
+  "name": "Stellar: Debug my_fn",
   "transactions": [
     { "kind": "deploy", "id": "mine", "contract": "${workspaceFolder}/my_crate" },
     { "kind": "invoke", "contract": "mine", "function": "my_fn", "args": { "x": 1 } }

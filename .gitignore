@@ -7,6 +7,10 @@ reports/
 *.vsix
 .DS_Store
 *.log
+.env
+.env.*
+# Local checkouts of komet / komet-node / wasm-semantics for dev iteration.
+.deps/
 state.kore
 .claude/
 test/fixtures/sample-contract/target/
@@ -14,3 +18,4 @@ test/fixtures/*/target/
 examples/*/target/
 # Fixture crates are built by hand only, to regenerate the committed .wasm.
 test/fixtures/*/Cargo.lock
+.notes/

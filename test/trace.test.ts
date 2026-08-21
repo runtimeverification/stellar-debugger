@@ -68,3 +68,37 @@ describe('trace parsing', () => {
     );
   });
 });
+
+describe('trace parsing: a pre-v0.1.87 komet-node', () => {
+  it('explains the old record shape as a stale komet-node, not as a parse error', () => {
+    // The old shape carried no `kind` field (see the 0.1.0 release notes).
+    assert.throws(
+      () => toTraceRecord({ pos: null, instr: ['callContract'], stack: [], locals: {} }, 1),
+      (e: unknown) => {
+        assert.ok(e instanceof TraceParseError, 'must stay a TraceParseError for existing handlers');
+        assert.match((e as Error).message, /komet v0\.1\.87/);
+        assert.match((e as Error).message, /kup install komet-node/);
+        assert.match((e as Error).message, /README\.md/);
+        return true;
+      },
+    );
+  });
+
+  it('reports the record number so a partially-old trace is locatable', () => {
+    assert.throws(
+      () => toTraceRecords([
+        { kind: 'instr', pos: 1, instr: ['nop'] },
+        { pos: 2, instr: ['nop'] },
+      ]),
+      /record 2|line 2/,
+    );
+  });
+
+  it('still reports a plainly malformed record as a malformed record', () => {
+    assert.throws(() => toTraceRecord({ foo: 1 }, 1), /'kind'/);
+    assert.throws(() => toTraceRecord({ foo: 1 }, 1), (e: unknown) => {
+      assert.doesNotMatch((e as Error).message, /komet v0\.1\.87/);
+      return true;
+    });
+  });
+});

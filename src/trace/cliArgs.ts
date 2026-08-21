@@ -1,5 +1,5 @@
 /**
- * Argv parsing for the one-shot trace CLI (`soroban-trace`).
+ * Argv parsing for the one-shot trace CLI (`stellar-trace`).
  *
  * `parseTraceArgs` is the devex front door: it resolves `--help`, validates
  * tokens and mode selection, and maps argv onto a discriminated union the
@@ -11,12 +11,12 @@ import { SorobanLaunchArgs } from '../debugAdapter/types';
 import { CliParse } from '../cli/shell';
 import { FlagSpec, isNonNegativeInt, parseFlags, wantsHelp } from '../cli/flags';
 
-/** The `soroban-trace` help text. */
-export const TRACE_USAGE = `soroban-trace — emit a Rust source-level execution trace as JSONL
+/** The `stellar-trace` help text. */
+export const TRACE_USAGE = `stellar-trace — emit a Rust source-level execution trace as JSONL
 
 Usage:
-  soroban-trace --raw-trace <file> [--wasm <file>] [options]     (offline replay)
-  soroban-trace --contract <dir> --function <name> [options]     (build & run live)
+  stellar-trace --raw-trace <file> [--wasm <file>] [options]     (offline replay)
+  stellar-trace --contract <dir> --function <name> [options]     (build & run live)
 
 Options:
   --raw-trace <file>    Recorded JSONL trace to replay (offline mode).
@@ -32,11 +32,11 @@ Options:
   -h, --help            Show this help.
 
 Examples:
-  soroban-trace --raw-trace run.jsonl --wasm contract.wasm
-  soroban-trace --contract . --function add --args-json '{"a":1,"b":2}'
+  stellar-trace --raw-trace run.jsonl --wasm contract.wasm
+  stellar-trace --contract . --function add --args-json '{"a":1,"b":2}'
 `;
 
-/** The projection options `soroban-trace` passes through to `runCliTrace`. */
+/** The projection options `stellar-trace` passes through to `runCliTrace`. */
 interface TraceOpts {
   maxDepth?: number;
   maxChildren?: number;
@@ -44,7 +44,7 @@ interface TraceOpts {
   justMyCode?: boolean;
 }
 
-/** Outcome of parsing `soroban-trace` argv. */
+/** Outcome of parsing `stellar-trace` argv. */
 export type TraceParse = CliParse<{
   launch: SorobanLaunchArgs;
   /** Echoed for the trace's meta record: the invoked function (live mode). */
@@ -55,7 +55,7 @@ export type TraceParse = CliParse<{
   opts: TraceOpts;
 }>;
 
-const HINT = "Run 'soroban-trace --help' for usage.";
+const HINT = "Run 'stellar-trace --help' for usage.";
 
 const FLAGS: FlagSpec = {
   value: [
@@ -72,7 +72,7 @@ const FLAGS: FlagSpec = {
 };
 
 /**
- * Devex front door for `soroban-trace`: resolve `--help`, validate tokens and
+ * Devex front door for `stellar-trace`: resolve `--help`, validate tokens and
  * mode selection, and map argv onto a `TraceParse`. Pure.
  */
 export function parseTraceArgs(argv: string[]): TraceParse {

@@ -146,11 +146,20 @@ export class KometClient {
     return records;
   }
 
-  /** Poll getHealth until healthy or the deadline passes. */
-  async waitForHealthy(deadlineMs: number, intervalMs = 500): Promise<void> {
+  /**
+   * Poll getHealth until healthy or the deadline passes.
+   *
+   * `giveUp` lets a caller that has already learned the node is doomed (see
+   * `KometProcess.whenFailed`) end the wait at once, instead of leaving a poll
+   * loop hammering a dead port for the rest of the deadline.
+   */
+  async waitForHealthy(deadlineMs: number, intervalMs = 500, giveUp?: () => boolean): Promise<void> {
     const start = Date.now();
     let lastErr: unknown;
     while (Date.now() - start < deadlineMs) {
+      if (giveUp?.()) {
+        throw new KometRpcError(`gave up waiting for komet-node at ${this.url}`);
+      }
       try {
         const h = await this.getHealth();
         if (h.status === 'healthy') {

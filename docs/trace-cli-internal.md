@@ -1,8 +1,8 @@
-# `soroban-trace` internals
+# `stellar-trace` internals
 
 > **Audience:** `contributor` · `maintainer` · `integrator` (internals)
 >
-> **TL;DR:** How `soroban-trace` turns a resolved trace into Rust-source-level
+> **TL;DR:** How `stellar-trace` turns a resolved trace into Rust-source-level
 > JSONL, and the `vscode`-free shared core it sits on (also used by the DAP
 > server — see [`dap-cli-internal.md`](./dap-cli-internal.md)). Documents the
 > `SourceStop`/`TraceVar` schema and the ground-truth fixtures. User-facing
@@ -93,6 +93,9 @@ low-level resolver calls:
 - `variables.functionNameAt(pc)` → function name (**may be `null`** even with DWARF)
 - `makeRuntimeState(record, model.memory, index)` + `variables.variablesInScope(pc)` +
   `variables.decodeVariable(v, state, pc)` → decoded variables
+  `buildCallStack({resolved, frames, ranges}, index)` → the stop's `frames`
+
+`frames` is the SAME derivation the DAP session's `stackTrace` returns (`src/debugAdapter/callStack.ts`), projected to JSON — the CLI adds only hex `pc` formatting and drops the per-frame `variables` (a stop's `variables` are the innermost frame's; repeating every frame's would multiply the output size).
 
 Children (`DecodedValue.children`) are expanded **eagerly** into plain arrays, bounded
 by a per-stop budget: `maxDepth` (default 3), `maxChildren` (default 64), and a global
@@ -108,11 +111,20 @@ interface SourceStop {
   depth: number;           // stopModel.depths[traceIndex]
   pc: string | null;       // hex, e.g. "0x2d", or null
   function: string | null; // functionNameAt(pc) or null
+  frames: StopFrame[];     // the call stack, innermost first (docs/callstack.md); never empty
   instr: string;           // renderInstr(record.instr)
   source: { path: string; line: number; column?: number } | null;
   variables: TraceVar[];
   globals?: Record<string, { type: string; value: string }>; // module-relative index (G1)
   ledger?: StopLedger;     // omitted when the trace carries no ledger info (L14)
+}
+interface StopFrame {       // see docs/callstack.md for the rules
+  level: number;            // 0 = innermost
+  name: string;             // never empty (C4)
+  kind: 'rust' | 'inline' | 'wasm' | 'contract';
+  pc: string | null;        // hex code offset, or null for a contract boundary
+  source: { path: string; line: number; column?: number } | null;
+  subtle?: true;            // non-workspace or sourceless: deemphasize (C5)
 }
 interface TraceVar {
   name: string;            // "<anon>" when DWARF gives none

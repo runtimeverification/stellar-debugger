@@ -1,8 +1,8 @@
 # Debug configuration reference
 
-> **Audience:** `soroban developer` · `getting started` · `writing launch.json`
+> **Audience:** `stellar contract developer` · `getting started` · `writing launch.json`
 >
-> **TL;DR:** A `soroban` launch configuration describes an ordered sequence of
+> **TL;DR:** A `stellar` launch configuration describes an ordered sequence of
 > transactions run against one fresh local ledger, and names which transaction
 > to trace and debug. You set up whatever state your call depends on (deploy
 > other contracts, run a constructor, seed storage) as earlier transactions,
@@ -29,7 +29,7 @@ A configuration is one JSON object in your `.vscode/launch.json` under
 
 ```jsonc
 {
-  "type": "soroban",
+  "type": "stellar",
   "request": "launch",
   "name": "…",            // shown in the Run and Debug dropdown
   "transactions": [ … ],  // the ordered sequence (required)
@@ -76,7 +76,7 @@ Notes on semantics that shape how you author a sequence:
 | `id` | ✅ | Handle name. Later `invoke` steps reference it via their `contract` field, and `trace` can select this deploy's transaction by this id. Must be unique. |
 | `contract` | one of `contract`/`wasm` | Path to a contract crate directory (containing `Cargo.toml`) to build. |
 | `wasm` | one of `contract`/`wasm` | Path to a prebuilt `.wasm`. Overrides building from `contract`. |
-| `buildCommand` | | Command used to build a `contract` directory. Defaults to `stellar contract build` (or the `soroban.stellar.path` setting). Ignored when `wasm` is given. |
+| `buildCommand` | | Command used to build a `contract` directory. Defaults to `stellar contract build` (or the `stellar.cliPath` setting). Ignored when `wasm` is given. |
 | `debugInfo` | | Build with DWARF debug info for Rust source mapping (default `true`). Set `false` to debug at the wasm level only. Ignored when `wasm` is given. |
 
 ### `invoke` step
@@ -144,12 +144,12 @@ work in path fields like `contract` and `wasm`.
 | `transactions` | The ordered live sequence (required for live mode). |
 | `trace` | Which transaction to debug (see [`trace`](#trace)). |
 | `sourceSecret` | Source account secret (`S…`) used to sign every transaction. A deterministic account is derived and self-seeded if omitted; its address is available as `${sourceAddress}`. |
-| `node` | Local-network connection/spawn settings: `attach`, `host`, `port`, `command`, `ioDir`, and `timeoutMs` (per-RPC timeout, default 10 min — raise it for very large contracts that take longer to upload or execute). |
+| `node` | Local-network connection/spawn settings: `attach`, `host`, `port`, `command`, `ioDir`, `timeoutMs` (per-RPC timeout, default 10 min — raise it for very large contracts that take longer to upload or execute), and `healthTimeoutMs` (how long to wait for the node to start answering, default 60 s; a node that cannot be started at all is reported at once regardless). |
 | `rawTrace` | Replay mode: path to a recorded JSONL trace to replay instead of running a live sequence. |
 | `wasmPath` | Replay mode only: a `.wasm` supplying disassembly and DWARF source mapping for the replayed trace. |
 
 Two VS Code settings let you point at executables that aren't on your `PATH`:
-`soroban.stellar.path` and `soroban.kometNode.path`.
+`stellar.cliPath` and `stellar.kometNode.path`.
 
 ## Replay mode
 
@@ -160,7 +160,7 @@ wasm-level fallback:
 
 ```jsonc
 {
-  "type": "soroban",
+  "type": "stellar",
   "request": "launch",
   "name": "Replay add(4, 3)",
   "rawTrace": "${workspaceFolder}/traces/add.trace.jsonl",
@@ -168,7 +168,7 @@ wasm-level fallback:
 }
 ```
 
-Record a trace with the [`soroban-trace`](./trace-cli.md) CLI.
+Record a trace with the [`stellar-trace`](./trace-cli.md) CLI.
 
 ## Examples
 
@@ -180,7 +180,7 @@ defaults to the last step.
 
 ```jsonc
 {
-  "type": "soroban",
+  "type": "stellar",
   "request": "launch",
   "name": "Debug add(1, 2)",
   "transactions": [
@@ -200,7 +200,7 @@ setup runs but the session opens on the call you care about.
 
 ```jsonc
 {
-  "type": "soroban",
+  "type": "stellar",
   "request": "launch",
   "name": "Debug router.swap",
   "transactions": [
@@ -233,7 +233,7 @@ named `args`:
 
 ```jsonc
 {
-  "type": "soroban",
+  "type": "stellar",
   "request": "launch",
   "name": "Debug pool.submit",
   "transactions": [

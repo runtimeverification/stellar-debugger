@@ -29,7 +29,7 @@
 import { createHash } from 'crypto';
 import { promises as fs } from 'fs';
 import { Keypair } from '@stellar/stellar-sdk';
-import { KometClient } from '../komet/KometClient';
+import { KometClient, KometRpcError } from '../komet/KometClient';
 import { ContractBuilder } from '../build/ContractBuilder';
 import { SorobanTxBuilder } from '../soroban/SorobanTxBuilder';
 import { stripDebugSections } from '../wasm/sections';
@@ -38,6 +38,8 @@ import { TraceModel } from '../debugAdapter/TraceModel';
 import { buildDebugArtifacts } from '../debugAdapter/artifacts';
 import { ProgressReporter, ResolvedTrace } from '../debugAdapter/types';
 import { encodeInvokeArgs, substitute } from '../soroban/specEncode';
+import { staleKometRpc } from '../diagnostics/setup';
+import { readFileOrExplain } from '../diagnostics/files';
 import { DeployStep, InvokeStep, NormalizedConfig } from './config';
 
 /** Options controlling how the sequence is run. */
@@ -139,10 +141,26 @@ export class SequenceRunner {
     // reverting tx stays debuggable).
     const traced = submitted[config.trace];
     report(`Fetching trace for transaction ${traced.hash} ...`);
-    const trace = await this.client.traceTransaction(traced.hash);
+    const trace = await this.fetchTrace(traced.hash);
 
     const model = new TraceModel(toTraceRecords(trace));
     return { model, ...buildDebugArtifacts(traced.wasm, model, report) };
+  }
+
+  /**
+   * Fetch the traced transaction's records. A node that does not know the
+   * method is not a protocol error to relay verbatim — it is a komet-node too
+   * old to trace at all, which is worth saying in those words.
+   */
+  private async fetchTrace(hash: string): Promise<unknown[]> {
+    try {
+      return await this.client.traceTransaction(hash);
+    } catch (e) {
+      if (e instanceof KometRpcError && (e.code === -32601 || /method not found/i.test(e.message))) {
+        throw staleKometRpc('traceTransaction');
+      }
+      throw e;
+    }
   }
 
   /** Upload + create a contract, registering its handle. */
@@ -191,7 +209,7 @@ export class SequenceRunner {
   /** Load a deploy's wasm: a prebuilt `wasm` path, or build a `contract` dir. */
   private async loadWasm(step: DeployStep, report: ProgressReporter): Promise<Buffer> {
     if (step.wasm) {
-      return fs.readFile(step.wasm);
+      return readFileOrExplain(step.wasm, `the prebuilt wasm for deploy step "${step.id}" (\`wasm\`)`);
     }
     const builder = new ContractBuilder();
     const wasmPath = await builder.build(
@@ -205,3 +223,4 @@ export class SequenceRunner {
     return fs.readFile(wasmPath);
   }
 }
+

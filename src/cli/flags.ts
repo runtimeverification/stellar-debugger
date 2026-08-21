@@ -1,5 +1,5 @@
 /**
- * The argv tokenizer both CLI front doors (`soroban-trace`, `soroban-dap`) parse
+ * The argv tokenizer both CLI front doors (`stellar-trace`, `stellar-dap`) parse
  * with, so they agree on what an option looks like and on how a bad one reads.
  *
  * Deliberately minimal — no `--flag=value`, no clustering, no positionals: every

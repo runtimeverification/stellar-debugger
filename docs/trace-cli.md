@@ -1,9 +1,9 @@
-# `soroban-trace` — Rust-level execution trace (CLI)
+# `stellar-trace` — Rust-level execution trace (CLI)
 
-> **Audience:** `soroban developer` (outside VS Code) · `CI / scripting user` ·
+> **Audience:** `stellar contract developer` (outside VS Code) · `CI / scripting user` ·
 > `AI agent integrator`
 >
-> **TL;DR:** `soroban-trace` builds and runs a contract once and prints a
+> **TL;DR:** `stellar-trace` builds and runs a contract once and prints a
 > Rust-source-level execution trace as JSONL — one record per source statement,
 > with the in-scope variables at that point. Built for scripts, CI, and AI
 > agents that want to *read* an execution rather than step through it
@@ -11,7 +11,7 @@
 > the standalone DAP server, see [`dap-cli.md`](./dap-cli.md); for internals, see
 > [`trace-cli-internal.md`](./trace-cli-internal.md).
 
-`soroban-trace` is a thin front-end over the same replay engine the VS Code
+`stellar-trace` is a thin front-end over the same replay engine the VS Code
 extension uses. It emits one JSON object per line: a leading `meta` record, one
 `stop` per source-level statement (in execution order), and a trailing
 `result`.
@@ -24,9 +24,11 @@ npm run build
 ```
 
 This produces `dist/trace.js`. Run it directly with `node dist/trace.js …`, or
-expose it as the `soroban-trace` command by installing the package
+expose it as the `stellar-trace` command by installing the package
 (`npm install -g .`, or `npm link` for local development). (`npm run build` also
 builds the DAP server — see [`dap-cli.md`](./dap-cli.md).)
+
+The marketplace build of the extension does not install these CLIs; they are built from this repository.
 
 Live mode (the primary use below) builds and runs a contract, so it needs the
 same tools as the editor — the [Stellar
@@ -37,14 +39,14 @@ needs no toolchain.
 
 ## Usage
 
-`soroban-trace --help`:
+`stellar-trace --help`:
 
 ```text
-soroban-trace — emit a Rust source-level execution trace as JSONL
+stellar-trace — emit a Rust source-level execution trace as JSONL
 
 Usage:
-  soroban-trace --raw-trace <file> [--wasm <file>] [options]     (offline replay)
-  soroban-trace --contract <dir> --function <name> [options]     (build & run live)
+  stellar-trace --raw-trace <file> [--wasm <file>] [options]     (offline replay)
+  stellar-trace --contract <dir> --function <name> [options]     (build & run live)
 
 Options:
   --raw-trace <file>    Recorded JSONL trace to replay (offline mode).
@@ -59,8 +61,8 @@ Options:
   -h, --help            Show this help.
 
 Examples:
-  soroban-trace --raw-trace run.jsonl --wasm contract.wasm
-  soroban-trace --contract . --function add --args-json '{"a":1,"b":2}'
+  stellar-trace --raw-trace run.jsonl --wasm contract.wasm
+  stellar-trace --contract . --function add --args-json '{"a":1,"b":2}'
 ```
 
 ## Quick start (build → deploy → run → trace)
@@ -81,7 +83,7 @@ JSONL to stdout:
 
 ```jsonl
 {"kind":"meta","function":"add","records":41,"stops":1,"hasDwarf":true}
-{"kind":"stop","step":0,"traceIndex":29,"depth":0,"pc":"0x2d","function":"invoke_raw_extern","instr":"i32.add","source":{"path":".../examples/adder/src/lib.rs","line":16,"column":9},"variables":[{"name":"arg_0","type":"Val","value":"17179869188"},{"name":"arg_1","type":"Val","value":"12884901892"}]}
+{"kind":"stop","step":0,"traceIndex":29,"depth":0,"pc":"0x2d","function":"invoke_raw_extern","frames":[{"level":0,"name":"add","kind":"inline","pc":"0x2d","source":{"path":".../examples/adder/src/lib.rs","line":16}},{"level":1,"name":"invoke_raw","kind":"inline","pc":"0x2d","source":{"path":".../examples/adder/src/lib.rs","line":12}},{"level":2,"name":"adder::__add::invoke_raw_extern","kind":"rust","pc":"0x2d","source":{"path":".../examples/adder/src/lib.rs","line":12}}],"instr":"i32.add","source":{"path":".../examples/adder/src/lib.rs","line":16,"column":9},"variables":[{"name":"arg_0","type":"Val","value":"17179869188"},{"name":"arg_1","type":"Val","value":"12884901892"}]}
 {"kind":"result","terminated":true}
 ```
 
@@ -90,6 +92,21 @@ Each `stop` carries the source location, the enclosing function, the call
 (aggregates expand into a nested `children` array, bounded by `--depth` /
 `--max-children`). The full `SourceStop` / `TraceVar` field reference is in
 [`trace-cli-internal.md`](./trace-cli-internal.md).
+
+### The call stack: `frames`
+
+`frames` is the whole call stack at that stop, innermost first — the same frames the editor's Callstack view shows, derived by the same shared code, so a script and a debug session never disagree about who called whom.
+Each frame states its `name`, its `pc`, where it stands (`source`), and which rung of the precision ladder placed it:
+
+| `kind` | meaning |
+| --- | --- |
+| `rust` | a wasm activation located by DWARF |
+| `inline` | a Rust frame the optimizer inlined into the activation below it |
+| `wasm` | an activation with no source-level identity (no DWARF at its pc) |
+| `contract` | a host-level contract invocation — a boundary marker, not a code position |
+
+An outer frame stands at the CALL it is suspended in, not at its own first line, and a frame the user did not write (Rust toolchain, a crates.io dependency, or any sourceless frame in a session that has line info) carries `"subtle": true`, so a consumer can fold the noise away without losing it.
+The example above is a build above opt-level 0, where `add` survives only as an inline frame inside the `#[contractimpl]` wrapper — the rules are specified in [`callstack.md`](./callstack.md).
 
 ### Machine state: `globals` and `ledger`
 

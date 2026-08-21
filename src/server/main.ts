@@ -1,5 +1,5 @@
 /**
- * Thin CLI entry for the standalone TCP DAP server (`soroban-dap`).
+ * Thin CLI entry for the standalone TCP DAP server (`stellar-dap`).
  *
  * Parses argv with the pure `parseServerArgs`, then — for a `run` result —
  * starts the server and logs the listening address to stderr. Help and usage

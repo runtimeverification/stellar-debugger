@@ -200,3 +200,17 @@ describe('KometClient', () => {
     await assert.rejects(() => client.waitForHealthy(30, 5), /did not become healthy/);
   });
 });
+
+describe('waitForHealthy: giving up early', () => {
+  it('stops polling as soon as the caller says the node is doomed', async () => {
+    // Nothing is listening on this port, so only `giveUp` can end the wait —
+    // well inside the 60s deadline it is given.
+    const client = new KometClient({ host: '127.0.0.1', port: 1, timeoutMs: 100 });
+    const started = Date.now();
+    let doomed = false;
+    setTimeout(() => (doomed = true), 50);
+
+    await assert.rejects(() => client.waitForHealthy(60_000, 20, () => doomed));
+    assert.ok(Date.now() - started < 5000, 'the wait ran on past the give-up signal');
+  });
+});

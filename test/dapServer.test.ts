@@ -47,7 +47,7 @@ describe('startDapServer (standalone TCP DAP server)', () => {
 
   /** Connect a fresh DebugClient to the server's TCP port. */
   async function connect(): Promise<DebugClient> {
-    const dc = new DebugClient('node', 'unused', 'soroban');
+    const dc = new DebugClient('node', 'unused', 'stellar');
     clients.push(dc);
     await dc.start(srv.port);
     return dc;
@@ -114,7 +114,7 @@ describe('startDapServer (standalone TCP DAP server)', () => {
     // A dedicated server whose sole connection uses the spy backend.
     const leakSrv = await startDapServer({ port: 0, backendFor: () => spy });
     try {
-      const dc = new DebugClient('node', 'unused', 'soroban');
+      const dc = new DebugClient('node', 'unused', 'stellar');
       await dc.start(leakSrv.port);
 
       // Drive a full launch so the backend selector resolves to the concrete
