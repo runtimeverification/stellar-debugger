@@ -183,6 +183,7 @@ internally.
 
 - **A trace can stop short of the invocation's end.** komet-node's tracer halts at instructions it cannot decode (it reports them as `unknown`), so depending on codegen some contracts replay only partially. The session opens and steps normally; it just ends earlier than the call did.
 - **Source stepping wants an unoptimized build.** The live pipeline builds with debug info at opt-level 0 for exactly this reason — at higher optimization levels a whole function can collapse onto a single line. See [`docs/stepping.md`](docs/stepping.md).
+- **A recording carries the source paths of the machine that built the contract.** They are absolute paths taken from the wasm's debug info, so a trace someone hands you opens its frames at paths that need not exist on your disk: the session still replays, steps and shows variables, but the editor cannot show the source itself unless the files sit where that build left them.
 - **One transaction per session.** A launch config can run a whole sequence of transactions, but exactly one of them (`trace`) is the one you step through.
 
 ## Roadmap
