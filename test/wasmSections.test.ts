@@ -2,9 +2,11 @@ import * as assert from 'assert';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import {
+  DATA_COUNT_SECTION_ID,
   parseWasmSections,
   stripCustomSections,
   stripDebugSections,
+  stripSectionsById,
   WasmFormatError,
 } from '../src/wasm/sections';
 import { WASM_HEADER, customSection, section, wasmModule } from './support/wasmBytes';
@@ -310,5 +312,97 @@ describe('stripCustomSections', () => {
 
     const tooShort = Uint8Array.from([0x00, 0x61, 0x73]);
     assert.throws(() => stripDebugSections(tooShort), WasmFormatError);
+  });
+});
+
+describe('stripSectionsById', () => {
+  // The fixture uses the literal 12, not the constant, so that a wrong
+  // DATA_COUNT_SECTION_ID is caught here instead of cancelling itself out.
+  // Order matters: DataCount is ordered after Element (9) and BEFORE Code (10).
+  const bytes = wasmModule(
+    section(1, [0x60, 0x00, 0x00]),
+    customSection('.debug_info', [1, 2, 3]),
+    section(12, [0x01]),
+    section(10, [0x01, 0x02, 0x00, 0x0b]),
+    section(11, [0x00]),
+  );
+
+  it('pins DATA_COUNT_SECTION_ID to the id the wasm spec assigns DataCount', () => {
+    assert.strictEqual(DATA_COUNT_SECTION_ID, 12);
+  });
+
+  it('removes the DataCount section and keeps every other section', () => {
+    const out = stripSectionsById(bytes, [DATA_COUNT_SECTION_ID]);
+    assert.deepStrictEqual(
+      parseWasmSections(out).sections.map((s) => s.id),
+      [1, 0, 10, 11],
+    );
+  });
+
+  it('keeps the code section payload byte-identical', () => {
+    const out = stripSectionsById(bytes, [DATA_COUNT_SECTION_ID]);
+    assert.deepStrictEqual(codePayload(out), codePayload(bytes));
+  });
+
+  it('composes with stripDebugSections the way the upload path does', () => {
+    const out = stripSectionsById(stripDebugSections(bytes), [DATA_COUNT_SECTION_ID]);
+    assert.deepStrictEqual(
+      parseWasmSections(out).sections.map((s) => s.id),
+      [1, 10, 11],
+    );
+    assert.deepStrictEqual(codePayload(out), codePayload(bytes));
+  });
+
+  it('returns an equivalent module when no id matches', () => {
+    assert.deepStrictEqual(Array.from(stripSectionsById(bytes, [99])), Array.from(bytes));
+    assert.deepStrictEqual(Array.from(stripSectionsById(bytes, [])), Array.from(bytes));
+  });
+
+  it('shifts later absolute offsets while leaving the code payload identical', () => {
+    // This is the invariant the upload path depends on. DataCount precedes the
+    // code section, so removing it DOES move the code section's absolute
+    // payloadStart. That is safe only because komet's trace `pos` and the
+    // debugger's disassembly are both relative to the code payload.
+    const out = stripSectionsById(bytes, [DATA_COUNT_SECTION_ID]);
+    const before = parseWasmSections(bytes).codeSection;
+    const after = parseWasmSections(out).codeSection;
+    assert.ok(before && after);
+    assert.ok(after.payloadStart < before.payloadStart, 'absolute offset must shift earlier');
+    assert.strictEqual(
+      after.payloadEnd - after.payloadStart,
+      before.payloadEnd - before.payloadStart,
+      'payload length must not change',
+    );
+    assert.deepStrictEqual(codePayload(out), codePayload(bytes));
+  });
+
+  it('is idempotent', () => {
+    const once = stripSectionsById(bytes, [DATA_COUNT_SECTION_ID]);
+    const twice = stripSectionsById(once, [DATA_COUNT_SECTION_ID]);
+    assert.deepStrictEqual(Array.from(twice), Array.from(once));
+  });
+
+  it('removes every listed id, not just the first', () => {
+    const out = stripSectionsById(bytes, [DATA_COUNT_SECTION_ID, 11, 1]);
+    assert.deepStrictEqual(
+      parseWasmSections(out).sections.map((s) => s.id),
+      [0, 10],
+    );
+  });
+
+  it('treats id 0 as every custom section', () => {
+    const out = stripSectionsById(bytes, [0]);
+    assert.deepStrictEqual(
+      parseWasmSections(out).sections.map((s) => s.id),
+      [1, 12, 10, 11],
+    );
+  });
+
+  it('throws WasmFormatError on a malformed header', () => {
+    const badMagic = Uint8Array.from([0x00, 0x61, 0x73, 0x00, 0x01, 0x00, 0x00, 0x00]);
+    assert.throws(() => stripSectionsById(badMagic, [DATA_COUNT_SECTION_ID]), WasmFormatError);
+
+    const tooShort = Uint8Array.from([0x00, 0x61, 0x73]);
+    assert.throws(() => stripSectionsById(tooShort, [DATA_COUNT_SECTION_ID]), WasmFormatError);
   });
 });

@@ -44,6 +44,8 @@ const WASM_MAGIC = [0x00, 0x61, 0x73, 0x6d];
 const WASM_VERSION = [0x01, 0x00, 0x00, 0x00];
 const CUSTOM_SECTION_ID = 0;
 const CODE_SECTION_ID = 10;
+/** DataCount section: redundant metadata that komet-node's parser rejects. */
+export const DATA_COUNT_SECTION_ID = 12;
 const MAX_ULEB_BYTES = 5;
 
 /**
@@ -127,6 +129,33 @@ export function stripCustomSections(
 /** Strip DWARF debug sections (`.debug*`). */
 export function stripDebugSections(bytes: Uint8Array): Uint8Array {
   return stripCustomSections(bytes, (name) => name.startsWith('.debug'));
+}
+
+/**
+ * Rebuilds `bytes` omitting every section whose id is in `ids`. Like
+ * `stripCustomSections`, remaining sections are copied verbatim, so the code
+ * section stays byte-for-byte identical and trace `pos` values keep pointing at
+ * the same instructions.
+ *
+ * Used for the DataCount section (id 12): it is redundant metadata that only
+ * pre-declares the data segment count, and komet-node's wasm parser rejects the
+ * whole module rather than skipping an id it does not know.
+ *
+ * Note that dropping a section shifts the ABSOLUTE file offset of every section
+ * after it. Callers that hold offsets into the original buffer must re-parse the
+ * result rather than reuse them.
+ */
+export function stripSectionsById(bytes: Uint8Array, ids: readonly number[]): Uint8Array {
+  const drop = new Set(ids);
+  const parsed = parseWasmSections(bytes);
+  const parts: Uint8Array[] = [bytes.subarray(0, WASM_MAGIC.length + WASM_VERSION.length)];
+  for (const s of parsed.sections) {
+    if (drop.has(s.id)) {
+      continue;
+    }
+    parts.push(bytes.subarray(s.start, s.payloadEnd));
+  }
+  return Buffer.concat(parts);
 }
 
 /**

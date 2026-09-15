@@ -3,6 +3,7 @@ import * as fc from 'fast-check';
 import {
   parseWasmSections,
   stripCustomSections,
+  stripSectionsById,
   WasmFormatError,
 } from '../../src/wasm/sections';
 import { WASM_HEADER, section, customSection, wasmModule } from '../support/wasmBytes';
@@ -20,7 +21,7 @@ const byteArb = fc.array(fc.integer({ min: 0, max: 255 }), { maxLength: 24 });
 const descArb: fc.Arbitrary<Desc> = fc.oneof(
   fc.record({
     kind: fc.constant<'plain'>('plain'),
-    id: fc.integer({ min: 1, max: 11 }),
+    id: fc.integer({ min: 1, max: 12 }),
     payload: byteArb,
   }),
   fc.record({
@@ -133,6 +134,52 @@ describe('property: parseWasmSections never crashes on arbitrary bytes', () => {
           assert.ok(Array.isArray(parsed.sections));
         } catch (e) {
           assert.ok(e instanceof WasmFormatError, `unexpected error: ${(e as Error).constructor.name}: ${(e as Error).message}`);
+        }
+      }),
+    );
+  });
+});
+
+describe('property: stripSectionsById', () => {
+  const idsArb = fc.uniqueArray(fc.integer({ min: 0, max: 12 }), { maxLength: 4 });
+
+  it('keeps exactly the sections whose id was not listed, in order and byte-identical', () => {
+    fc.assert(
+      fc.property(fc.array(descArb, { maxLength: 12 }), idsArb, (descs, ids) => {
+        const bytes = wasmModule(...descs.map(encode));
+        const out = stripSectionsById(bytes, ids);
+        const drop = new Set(ids);
+
+        const kept = parseWasmSections(bytes).sections.filter((s) => !drop.has(s.id));
+        const got = parseWasmSections(out).sections;
+        assert.strictEqual(got.length, kept.length, 'kept section count');
+        for (let i = 0; i < kept.length; i++) {
+          assert.strictEqual(got[i].id, kept[i].id, 'kept ids keep their order');
+          assert.deepStrictEqual(
+            Array.from(out.subarray(got[i].start, got[i].payloadEnd)),
+            Array.from(bytes.subarray(kept[i].start, kept[i].payloadEnd)),
+            'kept sections are copied verbatim',
+          );
+        }
+        assert.ok(got.every((s) => !drop.has(s.id)), 'no listed id survives');
+      }),
+    );
+  });
+
+  it('is idempotent, and a no-op when no id matches', () => {
+    fc.assert(
+      fc.property(fc.array(descArb, { maxLength: 10 }), idsArb, (descs, ids) => {
+        const bytes = wasmModule(...descs.map(encode));
+        const once = stripSectionsById(bytes, ids);
+        assert.deepStrictEqual(
+          Array.from(stripSectionsById(once, ids)),
+          Array.from(once),
+          'stripping twice equals stripping once',
+        );
+
+        const present = new Set(parseWasmSections(bytes).sections.map((s) => s.id));
+        if (!ids.some((id) => present.has(id))) {
+          assert.deepStrictEqual(Array.from(once), Array.from(bytes), 'no match means no change');
         }
       }),
     );

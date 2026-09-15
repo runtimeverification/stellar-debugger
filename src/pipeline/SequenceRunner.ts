@@ -32,7 +32,7 @@ import { Keypair } from '@stellar/stellar-sdk';
 import { KometClient, KometRpcError } from '../komet/KometClient';
 import { ContractBuilder } from '../build/ContractBuilder';
 import { SorobanTxBuilder } from '../soroban/SorobanTxBuilder';
-import { stripDebugSections } from '../wasm/sections';
+import { DATA_COUNT_SECTION_ID, stripDebugSections, stripSectionsById } from '../wasm/sections';
 import { toTraceRecords } from '../komet/trace';
 import { TraceModel } from '../debugAdapter/TraceModel';
 import { buildDebugArtifacts } from '../debugAdapter/artifacts';
@@ -170,9 +170,20 @@ export class SequenceRunner {
 
     // komet-node only executes the code; the DWARF custom sections just bloat
     // the KORE config it re-parses per RPC call, so strip them for the upload.
+    // The DataCount section (id 12) goes too: komet-node's wasm parser maps
+    // section ids 0x01..0x0b and raises `Invalid section id: 0xc` on anything
+    // else, so the upload fails outright. Whether rustc emits it depends on the
+    // toolchain and target features, not on contract size. Dropping it is safe
+    // because only memory.init/data.drop consult the declared count, and a
+    // contract built with active data segments uses neither.
+    // DataCount is ordered BEFORE the code section, so removing it shifts every
+    // later ABSOLUTE file offset. That is harmless here: komet's trace `pos` is
+    // relative to the payload of its own section, and Disassembly subtracts
+    // `codeSection.payloadStart` of whatever buffer it is given. Both sides stay
+    // payload-relative, and the debug artifacts read the full `wasm` anyway.
     // The code section stays byte-identical, keeping trace `pos` aligned with
     // the full `wasm` used for debug artifacts.
-    const uploadWasm = stripDebugSections(wasm);
+    const uploadWasm = stripSectionsById(stripDebugSections(wasm), [DATA_COUNT_SECTION_ID]);
     report(`Uploading wasm for "${step.id}" (${wasm.length} bytes, ${uploadWasm.length} stripped) ...`);
     const upload = txBuilder.buildUploadWasm(source, Buffer.from(uploadWasm));
     await submit(`Upload "${step.id}"`, upload.envelopeXdr);

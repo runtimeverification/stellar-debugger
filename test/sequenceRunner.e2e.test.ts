@@ -34,15 +34,18 @@
 
 import * as assert from 'assert';
 import * as path from 'path';
+import { promises as fs } from 'fs';
 import { spawnSync } from 'child_process';
 import { Keypair } from '@stellar/stellar-sdk';
 import { LiveBackend } from '../src/debugAdapter/backends/LiveBackend';
 import { SorobanLaunchArgs } from '../src/debugAdapter/types';
 import { TraceEvent } from '../src/komet/trace';
+import { DATA_COUNT_SECTION_ID, parseWasmSections } from '../src/wasm/sections';
 
 const FIXTURES = path.join(__dirname, '..', '..', 'test', 'fixtures');
 const CTOR_WASM = path.join(FIXTURES, 'ctor_probe.wasm');
 const COMPOSITE_WASM = path.join(FIXTURES, 'composite.wasm');
+const DATACOUNT_WASM = path.join(FIXTURES, 'datacount_contract.wasm');
 
 const KOMET_NODE_COMMAND = process.env.KOMET_NODE_COMMAND ?? 'komet-node';
 const optedOut = process.env.KOMET_NODE_E2E === '0';
@@ -120,11 +123,14 @@ describe('SequenceRunner e2e', function () {
   // killed even if an assertion (or the missing wiring) aborts a test midway.
   const active: LiveBackend[] = [];
 
-  async function runSequence(config: TxConfig) {
+  async function runSequence(config: TxConfig, log?: string[]) {
     const pipeline = new LiveBackend();
     active.push(pipeline);
     try {
-      return await pipeline.resolve(asRunArgs(config), (msg) => console.log(msg));
+      return await pipeline.resolve(asRunArgs(config), (msg) => {
+        log?.push(msg);
+        console.log(msg);
+      });
     } finally {
       await pipeline.dispose();
       const i = active.indexOf(pipeline);
@@ -343,5 +349,59 @@ describe('SequenceRunner e2e', function () {
       true,
       'the second byte-identical admin_set must re-execute (post-constructor state) — proving it was not deduped into the first',
     );
+  });
+
+  it('deploys and invokes a contract whose wasm carries a DataCount section', async () => {
+    // The real regression guard for the DataCount strip. komet-node's wasm
+    // parser knows section ids 0x01..0x0b and rejects anything else, so an
+    // unstripped module fails at upload with
+    // `ParseError: Invalid section id: 0xc` and never executes.
+    //
+    // Every other fixture in this repo is too small to carry a data segment,
+    // so none of them has a DataCount section and none of them exercises this
+    // path. datacount_contract does, which is the only reason it exists.
+    const raw = new Uint8Array(await fs.readFile(DATACOUNT_WASM));
+    assert.ok(
+      parseWasmSections(raw).sections.some((s) => s.id === DATA_COUNT_SECTION_ID),
+      'fixture must carry a DataCount section, otherwise this test proves nothing',
+    );
+
+    const log: string[] = [];
+    const resolved = await runSequence(
+      {
+        type: 'stellar',
+        request: 'launch',
+        sourceSecret: SOURCE_SECRET,
+        node: nodeSettings(),
+        transactions: [
+          { kind: 'deploy', id: 'dc', wasm: DATACOUNT_WASM },
+          { kind: 'invoke', contract: 'dc', function: 'lookup', args: { index: 3 } },
+        ],
+        trace: 'last',
+      },
+      log,
+    );
+
+    // The step statuses are what actually pin the bug. Without the strip the
+    // node rejects the module, the upload reports NOT_FOUND, the create still
+    // "succeeds" against a hash that was never uploaded, and the invoke FAILS —
+    // while a trace is still returned, so asserting only on the trace passes
+    // either way and proves nothing.
+    const step = (prefix: string) => {
+      const line = log.find((l) => l.startsWith(prefix));
+      assert.ok(line, `expected a '${prefix}' step in the run log`);
+      return line;
+    };
+    assert.match(step('Upload "dc"'), /SUCCESS/, 'the DataCount-bearing wasm must upload');
+    assert.match(step('Invoke lookup on "dc"'), /SUCCESS/, 'the deployed contract must execute');
+
+    // And the strip really happened: DataCount is 3 bytes here (id, size, payload).
+    assert.match(
+      step('Uploading wasm for "dc"'),
+      /755 bytes, 752 stripped/,
+      'expected exactly the DataCount section to be removed',
+    );
+
+    assert.ok(resolved.model.records.length > 0, 'expected a non-empty trace from the invoke');
   });
 });
