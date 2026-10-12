@@ -2,6 +2,13 @@
 
 All notable changes to this extension are documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] — 2026-10-12
+
+### Changed
+
+- The extension is no longer marked as a preview on the Marketplace.
+- The extension is now called **Simbolik: Stellar Debugger** in the Marketplace, the extensions list and the settings UI. Only the name changed: the extension identifier, the `stellar` debug type, the `stellar.*` settings and the `stellar-dap` and `stellar-trace` commands are all untouched, so installed copies update in place and existing launch configurations keep working.
+
 ## [0.1.0] — 2026-08-21
 
 This is the first public release. The extension debugs Stellar smart contracts written in Rust, in VSCode or from the command line, and it steps backward as readily as forward.
@@ -25,4 +32,5 @@ This is the first public release. The extension debugs Stellar smart contracts w
 - Debugging a contract requires [komet-node](https://github.com/runtimeverification/komet-node), the local Stellar network that runs it. It must be built with komet v0.1.87 or newer; an older build produces recordings this version cannot open, and says so rather than opening an empty session.
 - Building and deploying a contract also requires a Rust toolchain with a WebAssembly target and the Stellar CLI. Replaying a recording requires neither.
 
+[0.1.1]: https://github.com/runtimeverification/stellar-debugger/releases/tag/v0.1.1
 [0.1.0]: https://github.com/runtimeverification/stellar-debugger/releases/tag/v0.1.0
