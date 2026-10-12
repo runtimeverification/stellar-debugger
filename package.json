@@ -274,7 +274,7 @@
     "publish:openvsx": "ovsx publish"
   },
   "dependencies": {
-    "@stellar/stellar-sdk": "^14.6.1",
+    "@stellar/stellar-sdk": "^17.0.1",
     "@vscode/debugadapter": "^1.68.0",
     "@vscode/debugprotocol": "^1.68.0",
     "wasmparser": "^5.11.1"
