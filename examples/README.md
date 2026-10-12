@@ -1,4 +1,4 @@
-# Stellar Debugger — example workspace
+# Simbolik: Stellar Debugger — example workspace
 
 > **Audience:** `new user` · `stellar contract developer` (getting started)
 >
@@ -7,7 +7,7 @@
 > see source-level, forward-and-backward debugging in seconds — no toolchain
 > needed — then graduate to the full build-and-run pipeline.
 
-This folder is a **self-contained example workspace** for the Stellar Debugger
+This folder is a **self-contained example workspace** for the Simbolik: Stellar Debugger
 (komet) extension. Pressing **F5** ("Run Extension") in the extension repo opens
 this folder in an Extension Development Host with the extension already loaded,
 so you have a real Soroban project to debug immediately.

@@ -1,11 +1,11 @@
 {
   "name": "stellar-debugger",
-  "displayName": "Stellar Debugger",
+  "displayName": "Simbolik: Stellar Debugger",
   "description": "Time-travel debugger for Stellar/Soroban smart contracts: step your Rust source forward and backward, backed by komet-node.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "runtimeverification",
   "license": "BSD-3-Clause",
-  "preview": true,
+  "preview": false,
   "icon": "images/icon.png",
   "galleryBanner": {
     "color": "#0B1B2B",
@@ -50,7 +50,7 @@
   ],
   "contributes": {
     "configuration": {
-      "title": "Stellar Debugger",
+      "title": "Simbolik: Stellar Debugger",
       "properties": {
         "stellar.kometNode.path": {
           "type": "string",
@@ -133,7 +133,7 @@
                       "description": "invoke only: name of the contract function to call."
                     },
                     "args": {
-                      "markdownDescription": "`invoke` only: arguments, as an object keyed by the function's parameter names (composites, enums `{ \"tag\": ... }`, tuples/vecs as arrays, `i128` as a decimal string, addresses as `G\u2026`/`C\u2026` strings). Values are encoded against the contract's own spec. The tokens `${sourceAddress}` and `${contract:<id>}` are expanded inside string values."
+                      "markdownDescription": "`invoke` only: arguments, as an object keyed by the function's parameter names (composites, enums `{ \"tag\": ... }`, tuples/vecs as arrays, `i128` as a decimal string, addresses as `G…`/`C…` strings). Values are encoded against the contract's own spec. The tokens `${sourceAddress}` and `${contract:<id>}` are expanded inside string values."
                     }
                   }
                 }
