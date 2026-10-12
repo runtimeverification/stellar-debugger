@@ -7,7 +7,7 @@
 > test-first convention and how to regenerate fixtures, and a tour of how the
 > trace-replay adapter works internally (architecture map included).
 
-Thanks for your interest in improving the Stellar Debugger! This document covers
+Thanks for your interest in improving Simbolik: Stellar Debugger! This document covers
 how to get a development environment running and the conventions we follow.
 
 ## Development setup

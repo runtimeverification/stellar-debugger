@@ -1,4 +1,4 @@
-# Stellar Debugger
+# Simbolik: Stellar Debugger
 
 **Time-travel debugging for Stellar/Soroban smart contracts, right inside your
 editor.** Set a breakpoint in your Rust contract, hit debug, and step **forward
@@ -55,7 +55,7 @@ The node and its K semantics are published to Runtime Verification's binary cach
 
 ## Install
 
-Install **Stellar Debugger** from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=runtimeverification.stellar-debugger), or from the command line:
+Install **Simbolik: Stellar Debugger** from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=runtimeverification.stellar-debugger), or from the command line:
 
 ```bash
 code --install-extension runtimeverification.stellar-debugger
